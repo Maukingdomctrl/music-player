@@ -63,6 +63,14 @@ fun PlaybackUiState.toPlayerUi(
     error = error
 )
 
+/** Total time, or "--:--" while the duration is unknown (not prepared yet). */
+internal fun formatTotal(durationMs: Long): String =
+    if (durationMs > 0L) formatClock(durationMs) else "--:--"
+
+/** Played fraction 0..1; 0 while the duration is unknown. */
+internal fun playedFraction(positionMs: Long, durationMs: Long): Float =
+    if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+
 /** "mm:ss"; minutes keep counting past 59 (for example "125:03"). */
 internal fun formatClock(milliseconds: Long): String {
     val totalSeconds = milliseconds.coerceAtLeast(0L) / 1_000L

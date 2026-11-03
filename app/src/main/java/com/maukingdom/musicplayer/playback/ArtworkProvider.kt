@@ -18,8 +18,10 @@ import com.maukingdom.musicplayer.ui.PlayerSkin
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
+import kotlin.concurrent.thread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -142,8 +144,23 @@ class ArtworkProvider : ContentProvider() {
     private val preferences by lazy { PlaybackPreferences(appContext) }
     private val metadataReader by lazy { MetadataReader(appContext) }
 
-    private val cacheDir by lazy {
-        File(appContext.cacheDir, "artwork").apply { mkdirs() }
+    /**
+     * The artwork cache folder, re-created on every call because Android may
+     * clear the app's cache at any time. Null if it cannot be created; the
+     * provider then serves images from memory instead.
+     */
+    private fun artworkDir(): File? {
+        return try {
+            File(appContext.cacheDir, "artwork").takeIf { it.mkdirs() || it.isDirectory }
+        } catch (error: SecurityException) {
+            null
+        }
+    }
+
+    /** What openFile hands back: a cached file, or JPEG bytes sent through a pipe. */
+    private sealed interface Served {
+        class FromFile(val file: File) : Served
+        class InMemory(val jpeg: ByteArray) : Served
     }
 
     override fun onCreate(): Boolean = true
@@ -160,15 +177,51 @@ class ArtworkProvider : ContentProvider() {
         val target = targetOf(uri)
             ?: throw FileNotFoundException("Unknown artwork URI.")
 
-        val file = runBlocking(Dispatchers.IO) {
+        val served = runBlocking(Dispatchers.IO) {
             when (target) {
                 is ArtworkTarget.Song -> songArtwork(target.songId)
                 is ArtworkTarget.Playlist -> playlistArtwork(target.playlistId)
             }
         } ?: throw FileNotFoundException("No such song or playlist.")
 
-        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        return when (served) {
+            is Served.FromFile -> try {
+                ParcelFileDescriptor.open(served.file, ParcelFileDescriptor.MODE_READ_ONLY)
+            } catch (error: FileNotFoundException) {
+                // Deleted between the check and the open (cache cleared).
+                Log.w(TAG, "Cached artwork vanished; serving from memory.", error)
+                pipeOf(served.file.readBytesOrNull() ?: throw error)
+            }
+
+            is Served.InMemory -> pipeOf(served.jpeg)
+        }
     }
+
+    /**
+     * Returns the read end of a pipe and writes [bytes] from a background
+     * thread, since a pipe buffer is smaller than most JPEGs.
+     */
+    private fun pipeOf(bytes: ByteArray): ParcelFileDescriptor {
+        val (readEnd, writeEnd) = ParcelFileDescriptor.createPipe()
+
+        thread(name = "ArtworkPipe", isDaemon = true) {
+            try {
+                ParcelFileDescriptor.AutoCloseOutputStream(writeEnd).use { it.write(bytes) }
+            } catch (error: IOException) {
+                // The reader closed early; nothing to do.
+                Log.w(TAG, "Artwork pipe closed early.", error)
+            }
+        }
+
+        return readEnd
+    }
+
+    private fun File.readBytesOrNull(): ByteArray? =
+        try {
+            readBytes().takeIf { it.isNotEmpty() }
+        } catch (_: IOException) {
+            null
+        }
 
     override fun query(
         uri: Uri,
@@ -208,59 +261,92 @@ class ArtworkProvider : ContentProvider() {
     }
 
     /** Runs on Dispatchers.IO. Null if the song is not in the library. */
-    private suspend fun songArtwork(songId: String): File? {
+    private suspend fun songArtwork(songId: String): Served? {
         val song = repository.getSong(songId) ?: return null
+        val dir = artworkDir()
 
         val key = ArtworkPaths.sha256Hex(songId)
-        val cached = File(cacheDir, "$key.jpg")
-        if (cached.isUsable()) return cached
+        val cached = dir?.let { File(it, "$key.jpg") }
+        if (cached != null && cached.isUsable()) return Served.FromFile(cached)
 
         // Remembers that the file has no picture, so it is not re-read each time.
-        val noArtwork = File(cacheDir, "$key.none")
+        val noArtwork = dir?.let { File(it, "$key.none") }
 
-        if (!noArtwork.exists()) {
+        if (noArtwork == null || !noArtwork.exists()) {
             val bitmap = sourceArtwork(song)?.let(::decodeScaled)
 
-            if (bitmap != null && writeJpeg(bitmap, cached)) {
-                return cached
-            }
+            if (bitmap != null) {
+                if (cached != null && writeJpeg(bitmap, cached)) {
+                    return Served.FromFile(cached)
+                }
 
-            noArtwork.createNewFile()
+                jpegBytes(bitmap)?.let { return Served.InMemory(it) }
+            } else {
+                noArtwork?.createQuietly()
+            }
         }
 
         val skin = currentSkin()
-        val tile = File(
-            cacheDir,
-            ArtworkPaths.sha256Hex("tile", skin.id, songId, song.title) + ".jpg"
-        )
-
-        if (!tile.isUsable()) {
-            writeJpeg(ArtworkTile.render(song.title, song.artist, skin), tile)
+        val tile = dir?.let {
+            File(it, ArtworkPaths.sha256Hex("tile", skin.id, songId, song.title) + ".jpg")
         }
 
-        return tile.takeIf { it.isUsable() }
+        return cachedOrRendered(tile) { ArtworkTile.render(song.title, song.artist, skin) }
     }
 
     /** Runs on Dispatchers.IO. Null if the playlist does not exist. */
-    private suspend fun playlistArtwork(playlistId: Long): File? {
+    private suspend fun playlistArtwork(playlistId: Long): Served? {
         val playlist = repository.getPlaylist(playlistId) ?: return null
         val skin = currentSkin()
 
-        val tile = File(
-            cacheDir,
-            ArtworkPaths.sha256Hex(
-                "playlist",
-                skin.id,
-                playlistId.toString(),
-                playlist.name
-            ) + ".jpg"
-        )
-
-        if (!tile.isUsable()) {
-            writeJpeg(ArtworkTile.render(playlist.name, "PLAYLIST", skin), tile)
+        val tile = artworkDir()?.let {
+            File(
+                it,
+                ArtworkPaths.sha256Hex(
+                    "playlist",
+                    skin.id,
+                    playlistId.toString(),
+                    playlist.name
+                ) + ".jpg"
+            )
         }
 
-        return tile.takeIf { it.isUsable() }
+        return cachedOrRendered(tile) { ArtworkTile.render(playlist.name, "PLAYLIST", skin) }
+    }
+
+    /**
+     * Serves [file] if it is cached, else renders, caches and serves it. If
+     * there is no cache folder or the write fails, the JPEG is served from
+     * memory. Null only if encoding fails.
+     */
+    private fun cachedOrRendered(file: File?, render: () -> Bitmap): Served? {
+        if (file != null && file.isUsable()) return Served.FromFile(file)
+
+        val bitmap = render()
+        if (file != null && writeJpeg(bitmap, file)) return Served.FromFile(file)
+
+        return jpegBytes(bitmap)?.let { Served.InMemory(it) }
+    }
+
+    private fun jpegBytes(bitmap: Bitmap): ByteArray? {
+        return try {
+            val output = java.io.ByteArrayOutputStream()
+            check(bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)) {
+                "JPEG encoding failed."
+            }
+            output.toByteArray().takeIf { it.isNotEmpty() }
+        } catch (error: Exception) {
+            Log.w(TAG, "Artwork could not be encoded.", error)
+            null
+        }
+    }
+
+    private fun File.createQuietly() {
+        try {
+            createNewFile()
+        } catch (error: IOException) {
+            Log.w(TAG, "No-artwork marker could not be written.", error)
+        }
     }
 
     /** Embedded picture first, then the MediaStore album art URI. */
@@ -328,7 +414,12 @@ class ArtworkProvider : ContentProvider() {
 
     /** Writes to a temporary file and renames it, so readers never see half a file. */
     private fun writeJpeg(bitmap: Bitmap, target: File): Boolean {
-        val temp = File.createTempFile("art", ".tmp", cacheDir)
+        val temp = try {
+            File.createTempFile("art", ".tmp", target.parentFile)
+        } catch (error: IOException) {
+            Log.w(TAG, "Artwork cache is not writable.", error)
+            return false
+        }
 
         return try {
             FileOutputStream(temp).use { output ->

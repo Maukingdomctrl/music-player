@@ -689,16 +689,16 @@ private fun NeonSeekBar(
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     val currentOnSeek by rememberUpdatedState(onSeek)
 
-    val playedFraction = if (duration > 0L) {
-        (positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    // Empty bar and "--:--" until the player knows the duration.
+    val fraction = if (duration > 0L) {
+        dragFraction ?: playedFraction(positionMs, duration)
     } else {
         0f
     }
-    val fraction = dragFraction ?: playedFraction
     val shownPosition = if (dragFraction != null) (fraction * duration).toLong() else positionMs
 
     val elapsedText = formatClock(shownPosition)
-    val totalText = formatClock(duration)
+    val totalText = formatTotal(duration)
     val horizontalInset = 8.dp
 
     val gestures = if (enabled) {

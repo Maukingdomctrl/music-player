@@ -8,12 +8,14 @@ import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.playback.ArtworkPaths
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -83,6 +85,47 @@ class ArtworkProviderTest {
 
         assertTrue("Expected artwork bytes", bytes.size > 100)
         assertJpeg(bytes)
+    }
+
+    @Test
+    fun deletedCacheFolderIsRecreatedAndArtworkStillServed() {
+        val artworkDir = File(context.cacheDir, "artwork")
+        val uri = Uri.parse(ArtworkPaths.songUri(songId))
+
+        // Warm the cache, then wipe it the way Android's cache clearing does.
+        readAll(uri)
+        assertTrue(artworkDir.deleteRecursively())
+        assertFalse(artworkDir.exists())
+
+        val bytes = readAll(uri)
+
+        assertTrue("Expected artwork bytes", bytes.size > 100)
+        assertJpeg(bytes)
+        assertTrue("Cache folder should be recreated", artworkDir.isDirectory)
+    }
+
+    @Test
+    fun artworkIsServedFromMemoryWhenTheCacheFolderCannotBeCreated() {
+        val artworkDir = File(context.cacheDir, "artwork")
+        artworkDir.deleteRecursively()
+
+        // A plain file where the folder should be makes mkdirs() fail.
+        assertTrue(artworkDir.createNewFile())
+
+        try {
+            val song = readAll(Uri.parse(ArtworkPaths.songUri(songId)))
+            val playlist = readAll(Uri.parse(ArtworkPaths.playlistUri(playlistId)))
+
+            assertTrue("Expected song artwork bytes", song.size > 100)
+            assertJpeg(song)
+            // Ends with the JPEG end marker, so the whole image came through the pipe.
+            assertEquals(0xD9.toByte(), song.last())
+            assertTrue("Expected playlist artwork bytes", playlist.size > 100)
+            assertJpeg(playlist)
+            assertEquals(0xD9.toByte(), playlist.last())
+        } finally {
+            artworkDir.delete()
+        }
     }
 
     @Test
