@@ -162,6 +162,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = null
         )
 
+    val playerSkin: StateFlow<PlayerSkin> = preferences.appPreferences
+        .map { appPreferences -> PlayerSkin.fromId(appPreferences.playerSkinId) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = PlayerSkin.NEON_WALKMAN
+        )
+
     private var observedPlayer: Player? = null
 
     private val playerListener = object : Player.Listener {
@@ -312,6 +320,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             mutableLibraryOperation.value.loading ||
             folderController.state.value is FolderOperationState.Running
         ) {
+            showError(ANOTHER_OPERATION_RUNNING)
             return
         }
 
@@ -591,6 +600,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 preferences.setCarModeEnabled(enabled)
             } catch (error: Exception) {
                 showError(error.message ?: "Could not save Car Mode preference.")
+            }
+        }
+    }
+
+    fun setPlayerSkin(skin: PlayerSkin) {
+        viewModelScope.launch {
+            try {
+                preferences.setPlayerSkin(skin.id)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the player skin.")
             }
         }
     }

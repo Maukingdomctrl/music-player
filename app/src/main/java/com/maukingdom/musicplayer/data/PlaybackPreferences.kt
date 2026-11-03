@@ -46,7 +46,9 @@ data class PlaybackSnapshot(
 }
 
 data class AppPreferences(
-    val carModeEnabled: Boolean = false
+    val carModeEnabled: Boolean = false,
+    /** Stored skin ID; null when the user has never chosen one. */
+    val playerSkinId: String? = null
 )
 
 /**
@@ -67,6 +69,7 @@ class PlaybackPreferences(context: Context) {
         val repeatMode = intPreferencesKey("repeat_mode")
         val shuffleOrder = stringPreferencesKey("shuffle_order")
         val carModeEnabled = booleanPreferencesKey("car_mode_enabled")
+        val playerSkin = stringPreferencesKey("player_skin")
     }
 
     private val preferences: Flow<Preferences> = dataStore.data.catch { error ->
@@ -101,7 +104,8 @@ class PlaybackPreferences(context: Context) {
 
     val appPreferences: Flow<AppPreferences> = preferences.map { values ->
         AppPreferences(
-            carModeEnabled = values[Keys.carModeEnabled] ?: false
+            carModeEnabled = values[Keys.carModeEnabled] ?: false,
+            playerSkinId = values[Keys.playerSkin]
         )
     }
 
@@ -140,6 +144,12 @@ class PlaybackPreferences(context: Context) {
     suspend fun setCarModeEnabled(enabled: Boolean) {
         dataStore.edit { values ->
             values[Keys.carModeEnabled] = enabled
+        }
+    }
+
+    suspend fun setPlayerSkin(id: String) {
+        dataStore.edit { values ->
+            values[Keys.playerSkin] = id
         }
     }
 

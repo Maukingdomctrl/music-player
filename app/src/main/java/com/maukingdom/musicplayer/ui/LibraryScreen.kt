@@ -28,8 +28,6 @@ fun LibraryScreen(
     songs: List<SongEntity>,
     playlists: List<PlaylistEntity>,
     loading: Boolean,
-    onScan: () -> Unit,
-    onImport: () -> Unit,
     onPlay: (Int) -> Unit,
     onEdit: (SongEntity) -> Unit,
     onRemove: (String) -> Unit,
@@ -43,25 +41,6 @@ fun LibraryScreen(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            StereoButton(
-                text = "SCAN DEVICE",
-                onClick = onScan,
-                enabled = !loading,
-                modifier = Modifier.weight(1f)
-            )
-
-            StereoButton(
-                text = "SELECT FILES",
-                onClick = onImport,
-                enabled = !loading,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
         Text(
             text = "LIBRARY  •  ${songs.size} TRACKS",
             color = StereoColors.Green,
@@ -73,7 +52,7 @@ fun LibraryScreen(
                 message = if (loading) {
                     "Reading local music…"
                 } else {
-                    "No songs yet. Scan the device or select audio files."
+                    "No songs yet. Open the menu ☰ to scan this phone or select files."
                 },
                 modifier = Modifier.weight(1f)
             )

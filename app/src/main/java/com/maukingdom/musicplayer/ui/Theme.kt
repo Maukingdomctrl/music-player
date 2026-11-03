@@ -4,6 +4,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -33,9 +35,10 @@ object StereoColors {
 
     val NeonPink = Color(0xFFFF3EA5)
     val NeonPurple = Color(0xFFB86CFF)
-    val Silver = Color(0xFFC9CDD3)
-    val SilverLight = Color(0xFFF2F3F5)
-    val SilverDark = Color(0xFF9CA1A8)
+    val NeonOrange = Color(0xFFFF7A1A)
+    val Graphite = Color(0xFF1C1823)
+    val GraphiteLight = Color(0xFF2E2838)
+    val GraphiteDark = Color(0xFF141119)
     val BgTop = Color(0xFF3A1650)
     val BgMid = Color(0xFF1A0B2A)
 }
@@ -46,19 +49,19 @@ val ShareTechMono = FontFamily(Font(R.font.share_tech_mono))
 /** Michroma (SIL OFL 1.1), used only for the "MyCar Music" wordmark. */
 val BrandFont = FontFamily(Font(R.font.michroma))
 
-private val StereoColorScheme = darkColorScheme(
-    primary = StereoColors.Amber,
-    onPrimary = StereoColors.Black,
-    secondary = StereoColors.Green,
-    onSecondary = StereoColors.Black,
+private fun skinColorScheme(tokens: SkinTokens) = darkColorScheme(
+    primary = tokens.accent,
+    onPrimary = tokens.accentOn,
+    secondary = tokens.secondary,
+    onSecondary = tokens.background,
     tertiary = StereoColors.NeonPink,
     onTertiary = StereoColors.Black,
-    background = StereoColors.Fascia,
-    onBackground = StereoColors.Text,
-    surface = StereoColors.Panel,
-    onSurface = StereoColors.Text,
-    surfaceVariant = StereoColors.PanelRaised,
-    onSurfaceVariant = StereoColors.MutedText,
+    background = tokens.background,
+    onBackground = tokens.text,
+    surface = tokens.panel,
+    onSurface = tokens.text,
+    surfaceVariant = tokens.panelRaised,
+    onSurfaceVariant = tokens.muted,
     outline = StereoColors.DisplayBorder,
     error = StereoColors.Error,
     onError = StereoColors.Black
@@ -98,11 +101,26 @@ private val StereoTypography = Typography(
     )
 )
 
+/**
+ * Provides the skin's tokens and a matching Material colour scheme. Screens
+ * not yet migrated keep using [StereoColors] directly.
+ */
 @Composable
-fun MusicPlayerTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = StereoColorScheme,
-        typography = StereoTypography,
-        content = content
-    )
+fun MusicPlayerTheme(
+    skin: PlayerSkin = PlayerSkin.NEON_WALKMAN,
+    content: @Composable () -> Unit
+) {
+    val tokens = skin.tokens
+    val colorScheme = remember(skin) { skinColorScheme(tokens) }
+
+    CompositionLocalProvider(
+        LocalPlayerSkin provides skin,
+        LocalSkinTokens provides tokens
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = StereoTypography,
+            content = content
+        )
+    }
 }
