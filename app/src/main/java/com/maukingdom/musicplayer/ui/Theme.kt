@@ -6,50 +6,74 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.maukingdom.musicplayer.R
 
+/**
+ * Retro neon palette. The original property names are kept so existing
+ * screens compile unchanged; "Amber" is now the primary orange and "Green"
+ * the neon cyan accent.
+ */
 object StereoColors {
-    val Fascia = Color(0xFF101010)
-    val Panel = Color(0xFF242321)
-    val PanelRaised = Color(0xFF34312D)
-    val Display = Color(0xFF1B120A)
-    val DisplayBorder = Color(0xFF68401B)
-    val Amber = Color(0xFFFFA12D)
-    val AmberDim = Color(0xFFB86C1D)
-    val Green = Color(0xFF8FBC61)
-    val Text = Color(0xFFF0E7D8)
-    val MutedText = Color(0xFFB5AA99)
-    val Error = Color(0xFFFF8A65)
-    val Black = Color(0xFF080808)
+    val Fascia = Color(0xFF07060C)
+    val Panel = Color(0xFF1F1B27)
+    val PanelRaised = Color(0xFF2B2733)
+    val Display = Color(0xFF03100E)
+    val DisplayBorder = Color(0xFF3A3445)
+    val Amber = Color(0xFFFF8A3D)
+    val AmberDim = Color(0xFFC9420A)
+    val Green = Color(0xFF5FFBE0)
+    val Text = Color(0xFFECEDEF)
+    val MutedText = Color(0xFFB8B3C4)
+    val Error = Color(0xFFFF6B8A)
+    val Black = Color(0xFF07060C)
+
+    val NeonPink = Color(0xFFFF3EA5)
+    val NeonPurple = Color(0xFFB86CFF)
+    val Silver = Color(0xFFC9CDD3)
+    val SilverLight = Color(0xFFF2F3F5)
+    val SilverDark = Color(0xFF9CA1A8)
+    val BgTop = Color(0xFF3A1650)
+    val BgMid = Color(0xFF1A0B2A)
 }
+
+/** Share Tech Mono (SIL OFL 1.1) for display-style text. */
+val ShareTechMono = FontFamily(Font(R.font.share_tech_mono))
+
+/** Michroma (SIL OFL 1.1), used only for the "MyCar Music" wordmark. */
+val BrandFont = FontFamily(Font(R.font.michroma))
 
 private val StereoColorScheme = darkColorScheme(
     primary = StereoColors.Amber,
     onPrimary = StereoColors.Black,
     secondary = StereoColors.Green,
     onSecondary = StereoColors.Black,
+    tertiary = StereoColors.NeonPink,
+    onTertiary = StereoColors.Black,
     background = StereoColors.Fascia,
     onBackground = StereoColors.Text,
     surface = StereoColors.Panel,
     onSurface = StereoColors.Text,
     surfaceVariant = StereoColors.PanelRaised,
     onSurfaceVariant = StereoColors.MutedText,
+    outline = StereoColors.DisplayBorder,
     error = StereoColors.Error,
     onError = StereoColors.Black
 )
 
 private val StereoTypography = Typography(
     displaySmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Bold,
+        fontFamily = ShareTechMono,
+        fontWeight = FontWeight.Normal,
         fontSize = 28.sp,
         letterSpacing = 1.sp
     ),
     headlineSmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Bold,
+        fontFamily = ShareTechMono,
+        fontWeight = FontWeight.Normal,
         fontSize = 21.sp,
         letterSpacing = 0.7.sp
     ),

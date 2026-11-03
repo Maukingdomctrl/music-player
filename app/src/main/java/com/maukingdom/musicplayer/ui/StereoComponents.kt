@@ -84,7 +84,7 @@ fun StereoNavButton(
     Button(
         onClick = onClick,
         modifier = modifier,
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             1.dp,
             if (selected) StereoColors.Amber else StereoColors.DisplayBorder
@@ -122,7 +122,7 @@ fun StereoButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier,
-        shape = RoundedCornerShape(5.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             1.dp,
             if (illuminated) StereoColors.Amber else StereoColors.DisplayBorder

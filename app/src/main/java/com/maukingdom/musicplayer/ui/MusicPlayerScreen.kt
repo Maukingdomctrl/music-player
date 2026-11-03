@@ -7,15 +7,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -158,159 +158,167 @@ fun MusicPlayerScreen(
         }
     }
 
+    fun openCarMode() {
+        musicViewModel.setCarModeEnabled(true)
+        navigateTo(MusicPage.CAR)
+    }
+
+    val showBottomNav = editingSong == null && page != MusicPage.CAR
+
+    val selectedNavItem = when (page) {
+        MusicPage.LIBRARY -> RetroNavItem.LIBRARY
+        MusicPage.PLAYLISTS -> RetroNavItem.LISTS
+        MusicPage.PLAYER -> RetroNavItem.PLAYER
+        MusicPage.CAR, MusicPage.SIMULATOR -> null
+    }
+
     MusicPlayerTheme {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(StereoColors.Fascia)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            StereoHeader()
+        RetroBackground {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                RetroHeader()
 
-            if (editingSong == null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    StereoNavButton(
-                        text = "LIBRARY",
-                        selected = page == MusicPage.LIBRARY,
-                        onClick = { navigateTo(MusicPage.LIBRARY) }
-                    )
-                    StereoNavButton(
-                        text = "LISTS",
-                        selected = page == MusicPage.PLAYLISTS,
-                        onClick = { navigateTo(MusicPage.PLAYLISTS) }
-                    )
-                    StereoNavButton(
-                        text = "PLAYER",
-                        selected = page == MusicPage.PLAYER,
-                        onClick = { navigateTo(MusicPage.PLAYER) }
-                    )
-                    StereoNavButton(
-                        text = "CAR",
-                        selected = page == MusicPage.CAR,
-                        onClick = {
-                            musicViewModel.setCarModeEnabled(true)
-                            navigateTo(MusicPage.CAR)
-                        }
-                    )
-                    StereoNavButton(
-                        text = "SIM",
-                        selected = page == MusicPage.SIMULATOR,
-                        onClick = { navigateTo(MusicPage.SIMULATOR) }
+                recoveryNotice?.let { notice ->
+                    StereoMessage(
+                        message = notice,
+                        isError = true,
+                        onDismiss = musicViewModel::clearRecoveryNotice
                     )
                 }
-            }
 
-            recoveryNotice?.let { notice ->
-                StereoMessage(
-                    message = notice,
-                    isError = true,
-                    onDismiss = musicViewModel::clearRecoveryNotice
-                )
-            }
-
-            connectionError?.let { error ->
-                StereoMessage(
-                    message = error,
-                    isError = true,
-                    onDismiss = null
-                )
-            }
-
-            operation.message?.let { message ->
-                StereoMessage(
-                    message = message,
-                    isError = false,
-                    onDismiss = musicViewModel::clearOperationMessages
-                )
-            }
-
-            operation.error?.let { error ->
-                StereoMessage(
-                    message = error,
-                    isError = true,
-                    onDismiss = musicViewModel::clearOperationMessages
-                )
-            }
-
-            if (operation.loading) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        color = StereoColors.Amber,
-                        modifier = Modifier.padding(4.dp)
-                    )
-                    Text(
-                        text = "Reading local music…",
-                        color = StereoColors.Amber,
-                        style = MaterialTheme.typography.bodyMedium
+                connectionError?.let { error ->
+                    StereoMessage(
+                        message = error,
+                        isError = true,
+                        onDismiss = null
                     )
                 }
-            }
 
-            val songBeingEdited = editingSong
-
-            if (songBeingEdited != null) {
-                MetadataEditorScreen(
-                    song = songBeingEdited,
-                    onSave = { metadata ->
-                        musicViewModel.saveMetadata(
-                            songBeingEdited.id,
-                            metadata
-                        )
-                    },
-                    onCancel = musicViewModel::cancelMetadataEdit,
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                when (page) {
-                    MusicPage.LIBRARY -> LibraryScreen(
-                        songs = songs,
-                        playlists = playlists,
-                        loading = operation.loading,
-                        onScan = ::requestLibraryScan,
-                        onImport = ::openDocumentPicker,
-                        onPlay = { index ->
-                            musicViewModel.playSongs(songs, index)
-                            navigateTo(MusicPage.PLAYER)
-                        },
-                        onEdit = musicViewModel::editSong,
-                        onRemove = musicViewModel::removeSong,
-                        onAddToPlaylist = musicViewModel::addSongToPlaylist,
-                        modifier = Modifier.weight(1f)
+                operation.message?.let { message ->
+                    StereoMessage(
+                        message = message,
+                        isError = false,
+                        onDismiss = musicViewModel::clearOperationMessages
                     )
+                }
 
-                    MusicPage.PLAYLISTS -> PlaylistsScreen(
-                        playlists = playlists,
-                        selectedPlaylistId = selectedPlaylistId,
-                        selectedSongs = selectedPlaylistSongs,
-                        onSelectPlaylist = musicViewModel::selectPlaylist,
-                        onCreatePlaylist = musicViewModel::createPlaylist,
-                        onRenamePlaylist = musicViewModel::renamePlaylist,
-                        onDeletePlaylist = musicViewModel::deletePlaylist,
-                        onRemoveSong = musicViewModel::removeSongFromPlaylist,
-                        onReorder = musicViewModel::reorderPlaylist,
-                        onPlay = { index ->
-                            musicViewModel.playSongs(selectedPlaylistSongs, index)
-                            navigateTo(MusicPage.PLAYER)
-                        },
-                        modifier = Modifier.weight(1f)
+                operation.error?.let { error ->
+                    StereoMessage(
+                        message = error,
+                        isError = true,
+                        onDismiss = musicViewModel::clearOperationMessages
                     )
+                }
 
-                    MusicPage.PLAYER -> Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                if (operation.loading) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        PlayerScreen(
+                        CircularProgressIndicator(
+                            color = StereoColors.Amber,
+                            modifier = Modifier.padding(4.dp)
+                        )
+                        Text(
+                            text = "Reading local music…",
+                            color = StereoColors.Amber,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                val songBeingEdited = editingSong
+
+                if (songBeingEdited != null) {
+                    MetadataEditorScreen(
+                        song = songBeingEdited,
+                        onSave = { metadata ->
+                            musicViewModel.saveMetadata(
+                                songBeingEdited.id,
+                                metadata
+                            )
+                        },
+                        onCancel = musicViewModel::cancelMetadataEdit,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    when (page) {
+                        MusicPage.LIBRARY -> LibraryScreen(
+                            songs = songs,
+                            playlists = playlists,
+                            loading = operation.loading,
+                            onScan = ::requestLibraryScan,
+                            onImport = ::openDocumentPicker,
+                            onPlay = { index ->
+                                musicViewModel.playSongs(songs, index)
+                                navigateTo(MusicPage.PLAYER)
+                            },
+                            onEdit = musicViewModel::editSong,
+                            onRemove = musicViewModel::removeSong,
+                            onAddToPlaylist = musicViewModel::addSongToPlaylist,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        MusicPage.PLAYLISTS -> PlaylistsScreen(
+                            playlists = playlists,
+                            selectedPlaylistId = selectedPlaylistId,
+                            selectedSongs = selectedPlaylistSongs,
+                            onSelectPlaylist = musicViewModel::selectPlaylist,
+                            onCreatePlaylist = musicViewModel::createPlaylist,
+                            onRenamePlaylist = musicViewModel::renamePlaylist,
+                            onDeletePlaylist = musicViewModel::deletePlaylist,
+                            onRemoveSong = musicViewModel::removeSongFromPlaylist,
+                            onReorder = musicViewModel::reorderPlaylist,
+                            onPlay = { index ->
+                                musicViewModel.playSongs(selectedPlaylistSongs, index)
+                                navigateTo(MusicPage.PLAYER)
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        MusicPage.PLAYER -> Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            PlayerScreen(
+                                playback = playback,
+                                onPlayPause = musicViewModel::togglePlayPause,
+                                onPrevious = musicViewModel::previous,
+                                onNext = musicViewModel::next,
+                                onSeek = musicViewModel::seekTo,
+                                onShuffle = musicViewModel::toggleShuffle,
+                                onRepeat = musicViewModel::cycleRepeat,
+                                onVolumeChange = musicViewModel::setVolume,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                StereoButton(
+                                    text = "CLEAR QUEUE",
+                                    onClick = musicViewModel::clearQueue,
+                                    enabled = playback.connected,
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                StereoButton(
+                                    text = "CAR MODE",
+                                    onClick = ::openCarMode,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+
+                        MusicPage.CAR -> CarModeScreen(
                             playback = playback,
                             onPlayPause = musicViewModel::togglePlayPause,
                             onPrevious = musicViewModel::previous,
@@ -319,36 +327,32 @@ fun MusicPlayerScreen(
                             onShuffle = musicViewModel::toggleShuffle,
                             onRepeat = musicViewModel::cycleRepeat,
                             onVolumeChange = musicViewModel::setVolume,
+                            onExit = {
+                                musicViewModel.setCarModeEnabled(false)
+                                navigateTo(MusicPage.PLAYER)
+                            },
                             modifier = Modifier.weight(1f)
                         )
 
-                        StereoButton(
-                            text = "CLEAR QUEUE",
-                            onClick = musicViewModel::clearQueue,
-                            enabled = playback.connected,
-                            modifier = Modifier.fillMaxWidth()
+                        MusicPage.SIMULATOR -> HarmanSimulatorScreen(
+                            onBack = { navigateTo(MusicPage.PLAYER) },
+                            modifier = Modifier.weight(1f)
                         )
                     }
+                }
 
-                    MusicPage.CAR -> CarModeScreen(
-                        playback = playback,
-                        onPlayPause = musicViewModel::togglePlayPause,
-                        onPrevious = musicViewModel::previous,
-                        onNext = musicViewModel::next,
-                        onSeek = musicViewModel::seekTo,
-                        onShuffle = musicViewModel::toggleShuffle,
-                        onRepeat = musicViewModel::cycleRepeat,
-                        onVolumeChange = musicViewModel::setVolume,
-                        onExit = {
-                            musicViewModel.setCarModeEnabled(false)
-                            navigateTo(MusicPage.PLAYER)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    MusicPage.SIMULATOR -> HarmanSimulatorScreen(
-                        onBack = { navigateTo(MusicPage.PLAYER) },
-                        modifier = Modifier.weight(1f)
+                if (showBottomNav) {
+                    RetroBottomNav(
+                        selected = selectedNavItem,
+                        onSelect = { item ->
+                            navigateTo(
+                                when (item) {
+                                    RetroNavItem.LIBRARY -> MusicPage.LIBRARY
+                                    RetroNavItem.LISTS -> MusicPage.PLAYLISTS
+                                    RetroNavItem.PLAYER -> MusicPage.PLAYER
+                                }
+                            )
+                        }
                     )
                 }
             }
