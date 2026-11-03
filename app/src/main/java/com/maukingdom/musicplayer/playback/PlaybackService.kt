@@ -7,12 +7,14 @@ import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.Bundle
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -118,7 +120,50 @@ class PlaybackService : MediaLibraryService() {
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
             attachEqualizer(audioSessionId)
         }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // After a failure, try the equaliser again once per track change.
+            if (equalizer == null && mutableToneControlAvailable.value == false) {
+                attachEqualizer(player.audioSessionId)
+            }
+        }
     }
+
+    // Skipping unplayable files (see PlaybackRecovery). Main thread only.
+    private var consecutiveSkips = 0
+    private var skipResetJob: Job? = null
+
+    private val recoveryListener = object : Player.Listener {
+        override fun onPlayerError(error: PlaybackException) {
+            recoverFromError(error)
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            skipResetJob?.cancel()
+            skipResetJob = null
+
+            if (isPlaying && consecutiveSkips > 0) {
+                // A song that plays for more than 2 s resets the count.
+                val startedAt = SystemClock.elapsedRealtime()
+                skipResetJob = mainScope.launch {
+                    delay(PlaybackRecovery.RESET_AFTER_PLAYED_MS + 1)
+                    if (player.isPlaying) {
+                        consecutiveSkips = PlaybackRecovery.skipsAfterPlaying(
+                            consecutiveSkips,
+                            SystemClock.elapsedRealtime() - startedAt
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The last snapshot handed to the writer. Used to skip identical
+     * checkpoints and to write the queue only when it changed. Main thread
+     * only; cleared after a failed write so the next one is complete.
+     */
+    private var lastEnqueuedSnapshot: PlaybackSnapshot? = null
 
     private val mainScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -445,12 +490,14 @@ class PlaybackService : MediaLibraryService() {
         writerScope.launch {
             for (request in snapshotChannel) {
                 try {
-                    preferences.savePlaybackSnapshot(request.snapshot)
+                    preferences.savePlaybackSnapshot(request.snapshot, request.writeQueue)
                     request.result?.set(
                         SessionResult(SessionResult.RESULT_SUCCESS)
                     )
                 } catch (error: Exception) {
                     Log.e(TAG, "Could not save playback snapshot.", error)
+                    // Make the next checkpoint a complete one.
+                    mainScope.launch { lastEnqueuedSnapshot = null }
                     request.result?.set(
                         SessionResult(SessionResult.RESULT_ERROR_IO)
                     )
@@ -470,6 +517,8 @@ class PlaybackService : MediaLibraryService() {
 
         player.addListener(playerListener)
 
+        player.addListener(recoveryListener)
+
         player.addListener(toneListener)
         attachEqualizer(player.audioSessionId)
 
@@ -480,7 +529,13 @@ class PlaybackService : MediaLibraryService() {
                 .collect { (bass, treble) ->
                     toneBassDb = bass
                     toneTrebleDb = treble
-                    applyTone()
+
+                    // After a failure, a knob change tries attaching again.
+                    if (equalizer == null) {
+                        attachEqualizer(player.audioSessionId)
+                    } else {
+                        applyTone()
+                    }
                 }
         }
 
@@ -517,8 +572,45 @@ class PlaybackService : MediaLibraryService() {
                 if (!restorationInProgress &&
                     !(preserveSavedSnapshot && player.mediaItemCount == 0)
                 ) {
+                    // Identical snapshots (paused, nothing changed) are skipped.
                     enqueueSnapshot()
                 }
+            }
+        }
+    }
+
+    // Unplayable files
+
+    /**
+     * Skips a song whose file is missing, unreadable or unsupported, and
+     * carries on if playback was intended. Nothing is removed from the
+     * queue or the library.
+     */
+    private fun recoverFromError(error: PlaybackException) {
+        if (destroyed) return
+
+        val decision = PlaybackRecovery.decide(
+            errorCode = error.errorCode,
+            hasNext = player.hasNextMediaItem(),
+            consecutiveSkips = consecutiveSkips
+        )
+        consecutiveSkips = decision.consecutiveSkips
+
+        when (decision.action) {
+            RecoveryAction.IGNORE, RecoveryAction.STOP -> Unit
+
+            RecoveryAction.SKIP_TO_NEXT -> {
+                Log.w(TAG, "Skipping an unplayable song (${error.errorCodeName}).", error)
+                // playWhenReady survives the error, so playback resumes on
+                // its own if it was playing; a paused player stays paused.
+                player.seekToNextMediaItem()
+                player.prepare()
+            }
+
+            RecoveryAction.GIVE_UP -> {
+                Log.w(TAG, "Too many unplayable songs in a row; stopping.", error)
+                player.pause()
+                mutableRecoveryNotice.value = PlaybackRecovery.GIVE_UP_NOTICE
             }
         }
     }
@@ -1045,9 +1137,11 @@ class PlaybackService : MediaLibraryService() {
             val sent = snapshotChannel.trySend(
                 SnapshotWrite(
                     snapshot = emptySnapshot,
+                    writeQueue = true,
                     result = result
                 )
             )
+            lastEnqueuedSnapshot = emptySnapshot
 
             if (sent.isFailure) {
                 result.set(
@@ -1202,8 +1296,17 @@ class PlaybackService : MediaLibraryService() {
         val songsById = repository.getAllSongs().associateBy { it.id }
 
         /*
-         * Cache access checks so a repeated queue item is checked once.
+         * Only the song that plays first and at most two after it are
+         * opened, so a long queue restores quickly. Songs that turn out to
+         * be missing later are skipped during playback (recoverFromError).
+         * Songs no longer in the library are always left out.
          */
+        val checked = PlaybackRecovery.restoreCheckIndices(
+            queueSize = snapshot.queueSongIds.size,
+            selectedIndex = snapshot.selectedIndex
+        )
+
+        // Cache access checks so a repeated queue item is checked once.
         val accessById = mutableMapOf<String, Boolean>()
         val songs = mutableListOf<SongEntity>()
         val originalIndices = mutableListOf<Int>()
@@ -1212,12 +1315,10 @@ class PlaybackService : MediaLibraryService() {
         snapshot.queueSongIds.forEachIndexed { index, songId ->
             val song = songsById[songId]
 
-            val accessible = if (song == null) {
-                false
-            } else {
-                accessById.getOrPut(songId) {
-                    canOpen(song.uri)
-                }
+            val accessible = when {
+                song == null -> false
+                index !in checked -> true
+                else -> accessById.getOrPut(songId) { canOpen(song.uri) }
             }
 
             if (song != null && accessible) {
@@ -1294,13 +1395,32 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun enqueueSnapshot() {
         if (destroyed || restorationInProgress) return
+        sendSnapshot()
+    }
+
+    /**
+     * Sends the current state to the writer unless it equals the last one
+     * sent. The queue is included only when it (or its shuffle order)
+     * changed since then.
+     */
+    private fun sendSnapshot() {
+        val snapshot = captureSnapshot()
+        val last = lastEnqueuedSnapshot
+
+        if (snapshot == last) return
+
+        val writeQueue = last == null ||
+            snapshot.queueSongIds != last.queueSongIds ||
+            snapshot.shuffleOrder != last.shuffleOrder
 
         val sent = snapshotChannel.trySend(
-            SnapshotWrite(snapshot = captureSnapshot())
+            SnapshotWrite(snapshot = snapshot, writeQueue = writeQueue)
         )
 
         if (sent.isFailure) {
             Log.e(TAG, "Could not enqueue playback snapshot.")
+        } else {
+            lastEnqueuedSnapshot = snapshot
         }
     }
 
@@ -1365,15 +1485,14 @@ class PlaybackService : MediaLibraryService() {
         if (!restorationInProgress &&
             !(preserveSavedSnapshot && player.mediaItemCount == 0)
         ) {
-            snapshotChannel.trySend(
-                SnapshotWrite(snapshot = captureSnapshot())
-            )
+            sendSnapshot()
         }
 
         destroyed = true
         mainScope.cancel()
 
         player.removeListener(playerListener)
+        player.removeListener(recoveryListener)
         player.removeListener(toneListener)
         releaseEqualizer()
         mediaSession?.release()
@@ -1387,6 +1506,8 @@ class PlaybackService : MediaLibraryService() {
 
     private data class SnapshotWrite(
         val snapshot: PlaybackSnapshot,
+        /** False for position-only checkpoints: the saved queue is unchanged. */
+        val writeQueue: Boolean = true,
         val result: SettableFuture<SessionResult>? = null
     )
 

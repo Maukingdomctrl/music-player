@@ -121,6 +121,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             )
 
     private val mutablePlaybackState = MutableStateFlow(PlaybackUiState())
+
+    // Mirrors of two playbackState fields, so internal collectors do not
+    // count as UI subscribers of mutablePlaybackState.
+    private val mutableIsPlaying = MutableStateFlow(false)
+    private val mutableCurrentSongId = MutableStateFlow<String?>(null)
     val playbackState: StateFlow<PlaybackUiState> =
         mutablePlaybackState.asStateFlow()
 
@@ -248,19 +253,37 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     controller.addListener(playerListener)
                     updatePlaybackState(controller)
                 } else {
-                    mutablePlaybackState.value = PlaybackUiState(
-                        connected = false,
-                        volume = readSystemVolume()
+                    publishPlaybackState(
+                        PlaybackUiState(
+                            connected = false,
+                            volume = readSystemVolume()
+                        )
                     )
                 }
             }
         }
 
         viewModelScope.launch {
-            while (isActive) {
-                observedPlayer?.let(::updatePlaybackState)
-                delay(500L)
-            }
+            /*
+             * The 500 ms position poll runs only while the UI is visible
+             * (collectAsStateWithLifecycle subscribes to playbackState only
+             * while the screen is started) and something is playing. Player
+             * events still update the state at any time.
+             */
+            combine(
+                mutablePlaybackState.subscriptionCount.map { it > 0 },
+                mutableIsPlaying
+            ) { visible, playing -> visible to playing }
+                .distinctUntilChanged()
+                .collectLatest { (visible, playing) ->
+                    // Catch up once when the screen comes back.
+                    if (visible) observedPlayer?.let(::updatePlaybackState)
+
+                    while (visible && playing && isActive) {
+                        delay(500L)
+                        observedPlayer?.let(::updatePlaybackState)
+                    }
+                }
         }
 
         viewModelScope.launch {
@@ -269,9 +292,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             // collectLatest cancels the previous load when the song changes.
-            mutablePlaybackState
-                .map { it.currentSongId }
-                .distinctUntilChanged()
+            // Not collected from mutablePlaybackState, whose subscriber
+            // count tells the poll above whether the UI is visible.
+            mutableCurrentSongId
                 .collectLatest { songId ->
                     mutableCurrentArtwork.value = if (songId == null) {
                         null
@@ -378,7 +401,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        mutablePlaybackState.value = PlaybackUiState(
+        publishPlaybackState(PlaybackUiState(
             connected = true,
             title = metadata.title?.toString().orEmpty(),
             artist = metadata.artist?.toString().orEmpty(),
@@ -401,7 +424,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             repeatMode = player.repeatMode,
             volume = readSystemVolume(),
             error = player.playerError?.message
-        )
+        ))
+    }
+
+    private fun publishPlaybackState(state: PlaybackUiState) {
+        mutablePlaybackState.value = state
+        mutableIsPlaying.value = state.isPlaying
+        mutableCurrentSongId.value = state.currentSongId
     }
 
     fun scanMediaStore() {

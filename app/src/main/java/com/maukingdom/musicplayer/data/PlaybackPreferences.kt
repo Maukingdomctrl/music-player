@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -21,6 +22,26 @@ import org.json.JSONException
 private val Context.playbackDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "playback_preferences"
 )
+
+/**
+ * The saved queue lives in its own small file. DataStore rewrites a whole
+ * file on every edit, so keeping a long queue apart means the frequent
+ * position checkpoints no longer rewrite it.
+ */
+private val Context.playbackQueueDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "playback_queue"
+)
+
+/**
+ * Reading saved queues across storage versions. Pure, for JVM tests.
+ *
+ * Older versions kept the queue in the main preferences file. The queue
+ * file wins once it has been written; until then the old value is used.
+ */
+internal object SnapshotCompat {
+    fun pick(queueFileValue: String?, legacyValue: String?): String? =
+        queueFileValue ?: legacyValue
+}
 
 /**
  * The queue contains SongEntity IDs in normal queue order.
@@ -63,6 +84,7 @@ data class AppPreferences(
 class PlaybackPreferences(context: Context) {
 
     private val dataStore = context.applicationContext.playbackDataStore
+    private val queueStore = context.applicationContext.playbackQueueDataStore
 
     private object Keys {
         val queue = stringPreferencesKey("queue_song_ids")
@@ -85,8 +107,17 @@ class PlaybackPreferences(context: Context) {
         }
     }
 
-    val playbackSnapshot: Flow<PlaybackSnapshot> = preferences.map { values ->
-        val queue = decodeStringList(values[Keys.queue])
+    private val queueValues: Flow<Preferences> = queueStore.data.catch { error ->
+        if (error is IOException) {
+            emit(emptyPreferences())
+        } else {
+            throw error
+        }
+    }
+
+    val playbackSnapshot: Flow<PlaybackSnapshot> = combine(preferences, queueValues) { values, queued ->
+        val queue = decodeStringList(SnapshotCompat.pick(queued[Keys.queue], values[Keys.queue]))
+        val savedShuffleOrder = SnapshotCompat.pick(queued[Keys.shuffleOrder], values[Keys.shuffleOrder])
         val rawIndex = values[Keys.selectedIndex] ?: 0
 
         PlaybackSnapshot(
@@ -103,7 +134,7 @@ class PlaybackPreferences(context: Context) {
                     PlaybackSnapshot.REPEAT_OFF,
                     PlaybackSnapshot.REPEAT_ALL
                 ),
-            shuffleOrder = decodeStringList(values[Keys.shuffleOrder])
+            shuffleOrder = decodeStringList(savedShuffleOrder)
         )
     }
 
@@ -121,10 +152,14 @@ class PlaybackPreferences(context: Context) {
     }
 
     /**
-     * Writes all playback fields in one DataStore transaction, preventing
-     * readers from observing a partially updated snapshot.
+     * Saves a snapshot. The queue and shuffle order are written to the queue
+     * file only when [writeQueue] is true (the queue changed); the small
+     * fields (index, position, shuffle, repeat) are always written.
+     *
+     * The queue is written first, so a crash between the two writes can
+     * only leave an index that is clamped into the new queue on restore.
      */
-    suspend fun savePlaybackSnapshot(snapshot: PlaybackSnapshot) {
+    suspend fun savePlaybackSnapshot(snapshot: PlaybackSnapshot, writeQueue: Boolean = true) {
         val queue = snapshot.queueSongIds
 
         val safeIndex = if (queue.isEmpty()) {
@@ -138,13 +173,23 @@ class PlaybackPreferences(context: Context) {
             PlaybackSnapshot.REPEAT_ALL
         )
 
+        if (writeQueue) {
+            queueStore.edit { values ->
+                values[Keys.queue] = encodeStringList(queue)
+                values[Keys.shuffleOrder] = encodeStringList(snapshot.shuffleOrder)
+            }
+        }
+
         dataStore.edit { values ->
-            values[Keys.queue] = encodeStringList(queue)
+            if (writeQueue) {
+                // The queue file now holds them; drop the old copies.
+                values.remove(Keys.queue)
+                values.remove(Keys.shuffleOrder)
+            }
             values[Keys.selectedIndex] = safeIndex
             values[Keys.positionMs] = snapshot.positionMs.coerceAtLeast(0L)
             values[Keys.shuffleEnabled] = snapshot.shuffleEnabled
             values[Keys.repeatMode] = safeRepeatMode
-            values[Keys.shuffleOrder] = encodeStringList(snapshot.shuffleOrder)
         }
     }
 
