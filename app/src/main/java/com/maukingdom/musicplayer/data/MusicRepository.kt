@@ -4,6 +4,25 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 
 /**
+ * One audio document found in a linked folder. [documentId] is the exact SAF
+ * document ID. [song] has metadata already read and its ID already resolved
+ * by the caller; the repository matches existing songs only by [SongEntity.id].
+ */
+data class ScannedFolderDocument(
+    val documentId: String,
+    val song: SongEntity
+)
+
+data class FolderSyncResult(
+    val playlistId: Long,
+    val addedToPlaylist: Int,
+    val skippedAlreadyKnown: Int,
+    val newSongsInserted: Int,
+    val existingSongsReused: Int,
+    val alreadyInPlaylist: Int
+)
+
+/**
  * Application-facing operations for the local library and playlists.
  */
 class MusicRepository(
@@ -195,5 +214,150 @@ class MusicRepository(
 
             true
         }
+    }
+
+    /**
+     * Creates a playlist linked to [treeUri] and adds [initialDocuments].
+     * If [treeUri] is already linked, the existing playlist is reused without
+     * renaming it and the documents are added with the same additive rules.
+     * Everything happens in one transaction.
+     */
+    suspend fun createFolderPlaylist(
+        name: String,
+        treeUri: String,
+        linkedAtMs: Long,
+        initialDocuments: List<ScannedFolderDocument>
+    ): FolderSyncResult {
+        val cleanedName = name.trim()
+        require(cleanedName.isNotEmpty()) { "A playlist name is required." }
+
+        return database.withTransaction {
+            val existingLink = dao.getFolderLinkByTreeUri(treeUri)
+
+            val playlistId = if (existingLink != null) {
+                existingLink.playlistId
+            } else {
+                val newPlaylistId = dao.insertPlaylist(
+                    PlaylistEntity(name = cleanedName)
+                )
+
+                dao.insertFolderLink(
+                    FolderPlaylistEntity(
+                        playlistId = newPlaylistId,
+                        treeUri = treeUri,
+                        linkedAtMs = linkedAtMs,
+                        lastSyncedAtMs = null
+                    )
+                )
+
+                newPlaylistId
+            }
+
+            val result = applyFolderDocuments(
+                playlistId = playlistId,
+                documents = initialDocuments,
+                discoveredAtMs = linkedAtMs
+            )
+
+            dao.updateLastSynced(playlistId, linkedAtMs)
+
+            result
+        }
+    }
+
+    /**
+     * Adds newly discovered folder documents to a folder-linked playlist.
+     * Documents seen before are skipped, so songs the user removed from the
+     * playlist or library are not added back. Nothing is deleted or reordered.
+     */
+    suspend fun applyFolderSync(
+        playlistId: Long,
+        documents: List<ScannedFolderDocument>,
+        syncedAtMs: Long
+    ): FolderSyncResult {
+        return database.withTransaction {
+            checkNotNull(dao.getFolderLink(playlistId)) {
+                "Playlist is not linked to a folder."
+            }
+
+            val result = applyFolderDocuments(
+                playlistId = playlistId,
+                documents = documents,
+                discoveredAtMs = syncedAtMs
+            )
+
+            dao.updateLastSynced(playlistId, syncedAtMs)
+
+            result
+        }
+    }
+
+    /**
+     * Per-document folder sync rules. Must be called inside a transaction.
+     * Existing songs are reused by exact ID and never updated.
+     */
+    private suspend fun applyFolderDocuments(
+        playlistId: Long,
+        documents: List<ScannedFolderDocument>,
+        discoveredAtMs: Long
+    ): FolderSyncResult {
+        var addedToPlaylist = 0
+        var skippedAlreadyKnown = 0
+        var newSongsInserted = 0
+        var existingSongsReused = 0
+        var alreadyInPlaylist = 0
+
+        var nextPosition = dao.getLastPlaylistPosition(playlistId) + 1
+
+        for (document in documents.distinctBy { it.documentId }) {
+            if (dao.isDocumentKnown(playlistId, document.documentId)) {
+                skippedAlreadyKnown++
+                continue
+            }
+
+            val song = document.song
+
+            if (dao.insertSong(song) != -1L) {
+                newSongsInserted++
+            } else {
+                existingSongsReused++
+            }
+
+            val recorded = dao.insertFolderDocument(
+                FolderDocumentEntity(
+                    playlistId = playlistId,
+                    documentId = document.documentId,
+                    songId = song.id,
+                    discoveredAtMs = discoveredAtMs
+                )
+            )
+            check(recorded != -1L) {
+                "Folder document was not recorded: ${document.documentId}"
+            }
+
+            val added = dao.insertPlaylistSong(
+                PlaylistSongEntity(
+                    playlistId = playlistId,
+                    songId = song.id,
+                    position = nextPosition
+                )
+            ) != -1L
+
+            if (added) {
+                addedToPlaylist++
+                nextPosition++
+            } else {
+                alreadyInPlaylist++
+            }
+        }
+
+        return FolderSyncResult(
+            playlistId = playlistId,
+            addedToPlaylist = addedToPlaylist,
+            skippedAlreadyKnown = skippedAlreadyKnown,
+            newSongsInserted = newSongsInserted,
+            existingSongsReused = existingSongsReused,
+            alreadyInPlaylist = alreadyInPlaylist
+        )
     }
 }
