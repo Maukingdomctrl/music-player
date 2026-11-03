@@ -18,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.maukingdom.musicplayer.data.PlaylistEntity
@@ -191,10 +193,27 @@ private fun LibrarySongCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                TextButton(onClick = onPlay) { Text("PLAY") }
-                TextButton(onClick = onEdit) { Text("EDIT") }
-                TextButton(onClick = onAdd) { Text("ADD") }
-                TextButton(onClick = onRemove) { Text("REMOVE") }
+                // TalkBack reads the song name with each action, not just "Play".
+                TextButton(
+                    onClick = onPlay,
+                    modifier = Modifier.semantics { contentDescription = "Play ${song.title}" }
+                ) { Text("PLAY") }
+                TextButton(
+                    onClick = onEdit,
+                    modifier = Modifier.semantics { contentDescription = "Edit ${song.title}" }
+                ) { Text("EDIT") }
+                TextButton(
+                    onClick = onAdd,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Add ${song.title} to a playlist"
+                    }
+                ) { Text("ADD") }
+                TextButton(
+                    onClick = onRemove,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Remove ${song.title} from the library"
+                    }
+                ) { Text("REMOVE") }
             }
         }
     }

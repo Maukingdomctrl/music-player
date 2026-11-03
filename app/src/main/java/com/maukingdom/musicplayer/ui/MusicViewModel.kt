@@ -9,8 +9,10 @@ import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.maukingdom.musicplayer.data.ImportResult
 import com.maukingdom.musicplayer.data.MetadataReader
@@ -25,6 +27,7 @@ import com.maukingdom.musicplayer.playback.ArtworkPaths
 import com.maukingdom.musicplayer.playback.MediaItemMapper
 import com.maukingdom.musicplayer.playback.PlaybackService
 import com.maukingdom.musicplayer.playback.PlayerConnection
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -69,7 +73,10 @@ data class LibraryOperationState(
     val error: String? = null
 )
 
-class MusicViewModel(application: Application) : AndroidViewModel(application) {
+class MusicViewModel(
+    application: Application,
+    private val savedState: SavedStateHandle
+) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
 
@@ -100,7 +107,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyList()
     )
 
-    private val mutableSelectedPlaylistId = MutableStateFlow<Long?>(null)
+    // Saved, so the open playlist survives Android killing the app (#19).
+    private val mutableSelectedPlaylistId =
+        MutableStateFlow(savedState.get<Long>(KEY_SELECTED_PLAYLIST))
     val selectedPlaylistId: StateFlow<Long?> =
         mutableSelectedPlaylistId.asStateFlow()
 
@@ -243,6 +252,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         connection.connect()
+
+        // Reopen the metadata editor after process death; its text fields
+        // restore their drafts with rememberSaveable.
+        savedState.get<String>(KEY_EDITING_SONG)?.let { songId ->
+            viewModelScope.launch {
+                val song = try {
+                    repository.getSong(songId)
+                } catch (error: Exception) {
+                    null
+                }
+
+                if (song == null) {
+                    savedState.remove<String>(KEY_EDITING_SONG)
+                } else if (mutableEditingSong.value == null) {
+                    mutableEditingSong.value = song
+                }
+            }
+        }
 
         viewModelScope.launch {
             connection.controller.collect { controller ->
@@ -665,14 +692,50 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return (current.toFloat() / maximum.toFloat()).coerceIn(0f, 1f)
     }
 
+    /**
+     * "Play X on MyCar Music" from the phone's Assistant (the
+     * MEDIA_PLAY_FROM_SEARCH intent). Hands the query to the playback
+     * service, which uses the same matching as Android Auto voice search; a
+     * blank query resumes or plays the latest folder playlist. Waits for the
+     * controller if it is still connecting.
+     */
+    fun playFromSearch(query: String) {
+        viewModelScope.launch {
+            try {
+                val controller = connection.controller.filterNotNull().first()
+
+                val request = MediaItem.Builder()
+                    .setRequestMetadata(
+                        MediaItem.RequestMetadata.Builder()
+                            .setSearchQuery(query)
+                            .build()
+                    )
+                    .build()
+
+                controller.setMediaItem(request)
+                controller.prepare()
+                controller.play()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not start playback from the search.")
+            }
+        }
+    }
+
     fun selectPlaylist(playlistId: Long?) {
+        setSelectedPlaylist(playlistId)
+    }
+
+    private fun setSelectedPlaylist(playlistId: Long?) {
         mutableSelectedPlaylistId.value = playlistId
+        savedState[KEY_SELECTED_PLAYLIST] = playlistId
     }
 
     fun createPlaylist(name: String) {
         runLibraryAction {
             val id = repository.createPlaylist(name)
-            mutableSelectedPlaylistId.value = id
+            setSelectedPlaylist(id)
         }
     }
 
@@ -691,7 +754,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (mutableSelectedPlaylistId.value == playlistId) {
-                mutableSelectedPlaylistId.value = null
+                setSelectedPlaylist(null)
             }
         }
     }
@@ -739,10 +802,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun editSong(song: SongEntity) {
         mutableEditingSong.value = song
+        savedState[KEY_EDITING_SONG] = song.id
     }
 
     fun cancelMetadataEdit() {
         mutableEditingSong.value = null
+        savedState.remove<String>(KEY_EDITING_SONG)
     }
 
     fun saveMetadata(songId: String, metadata: SongMetadata) {
@@ -759,6 +824,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 mutableEditingSong.value = null
+                savedState.remove<String>(KEY_EDITING_SONG)
                 mutableLibraryOperation.value = LibraryOperationState(
                     message = "Metadata saved in the app library."
                 )
@@ -850,5 +916,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             "Another library operation is already running."
 
         const val ARTWORK_MAX_PX = 512
+
+        const val KEY_SELECTED_PLAYLIST = "selected_playlist_id"
+        const val KEY_EDITING_SONG = "editing_song_id"
     }
 }

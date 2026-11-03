@@ -172,6 +172,20 @@ class VoiceSearchTest {
     }
 
     @Test
+    fun noMatchMessages() {
+        assertEquals(
+            "Couldn't find \"bohemian rhapsody\" in MyCar Music.",
+            VoiceSearch.noMatchMessage("  bohemian rhapsody ")
+        )
+
+        // A blank request only finds nothing when the library is empty.
+        for (blank in listOf("", "   ", "?!")) {
+            assertEquals(VoiceSearch.EMPTY_LIBRARY_MESSAGE, VoiceSearch.noMatchMessage(blank))
+        }
+        assertEquals("Your MyCar Music library is empty.", VoiceSearch.EMPTY_LIBRARY_MESSAGE)
+    }
+
+    @Test
     fun searchResultsRankTitleBeforeArtistBeforeAlbum() {
         val results = VoiceSearch.searchResults("dil se", emptyList(), emptySet(), songs)
 

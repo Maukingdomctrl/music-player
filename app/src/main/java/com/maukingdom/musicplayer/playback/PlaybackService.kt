@@ -1096,10 +1096,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private fun noMatchMessage(query: String): String {
-        val shown = query.trim().take(80)
-        return "Couldn't find \"$shown\" in MyCar Music."
-    }
+    private fun noMatchMessage(query: String): String = VoiceSearch.noMatchMessage(query)
 
     /**
      * Handles the explicit clear as one service-side operation.

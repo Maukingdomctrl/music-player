@@ -8,7 +8,14 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Binder
 import android.os.ParcelFileDescriptor
+import android.os.Process
+import android.os.SystemClock
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import android.util.Log
 import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.MusicRepository
@@ -21,8 +28,9 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
-import kotlin.concurrent.thread
-import kotlinx.coroutines.Dispatchers
+import java.util.Collections
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
@@ -125,6 +133,39 @@ object ArtworkPaths {
 }
 
 /**
+ * Who may read artwork from the exported provider. Pure, for JVM tests.
+ *
+ * Allowed: this app, the system (UID 1000), and the media clients that
+ * show cover art (Android Auto, System UI media controls, Bluetooth
+ * AVRCP, Samsung's always-on display and launcher). Any other app is
+ * refused, so it cannot probe the library without audio permission.
+ */
+object ArtworkAccess {
+
+    const val SYSTEM_UID = 1000
+
+    val ALLOWED_PACKAGES: Set<String> = setOf(
+        "com.google.android.projection.gearhead",
+        "com.android.systemui",
+        "com.android.bluetooth",
+        "com.samsung.android.app.aodservice",
+        "com.sec.android.app.launcher"
+    )
+
+    fun isAllowed(callingUid: Int, myUid: Int, callingPackages: Collection<String>): Boolean =
+        callingUid == myUid ||
+            callingUid == SYSTEM_UID ||
+            callingPackages.any { it in ALLOWED_PACKAGES }
+
+    /**
+     * Time left for a pipe write that started at [startedAtMs] with a
+     * [timeoutMs] budget, or 0 once it has run out.
+     */
+    fun remainingMs(nowMs: Long, startedAtMs: Long, timeoutMs: Long): Long =
+        (startedAtMs + timeoutMs - nowMs).coerceAtLeast(0L)
+}
+
+/**
  * Read-only artwork for media browsers such as Android Auto, which run in
  * another process and cannot read this app's song URIs directly.
  *
@@ -139,6 +180,23 @@ class ArtworkProvider : ContentProvider() {
         private const val MAX_SIZE = 512
         private const val JPEG_QUALITY = 85
         private const val MAX_SOURCE_BYTES = 20 * 1024 * 1024
+
+        private const val PIPE_TIMEOUT_MS = 10_000L
+
+        /** Writes at most this much after poll() says the pipe has room. */
+        private const val PIPE_CHUNK = 4096
+
+        /**
+         * Two threads for artwork lookups, decoding and pipe writes, so a
+         * burst of requests from Android Auto cannot pile up decodes.
+         */
+        private val worker = Executors.newFixedThreadPool(2) { task ->
+            Thread(task, "ArtworkWorker").apply { isDaemon = true }
+        }
+        private val workerDispatcher = worker.asCoroutineDispatcher()
+
+        /** Each refused package is logged once per process. */
+        private val loggedDenials: MutableSet<String> = Collections.synchronizedSet(HashSet())
     }
 
     private val appContext: Context
@@ -191,10 +249,12 @@ class ArtworkProvider : ContentProvider() {
             throw SecurityException("Artwork is read-only.")
         }
 
+        checkCaller()
+
         val target = targetOf(uri)
             ?: throw FileNotFoundException("Unknown artwork URI.")
 
-        val served = runBlocking(Dispatchers.IO) {
+        val served = runBlocking(workerDispatcher) {
             when (target) {
                 is ArtworkTarget.Song -> songArtwork(target.songId)
                 is ArtworkTarget.Playlist -> playlistArtwork(target.playlistId)
@@ -214,23 +274,101 @@ class ArtworkProvider : ContentProvider() {
         }
     }
 
+    /** Throws SecurityException unless the caller is allowed by [ArtworkAccess]. */
+    private fun checkCaller() {
+        val uid = Binder.getCallingUid()
+        val myUid = Process.myUid()
+
+        // In-process reads (the app's own UI) are not binder calls.
+        if (uid == myUid || uid == ArtworkAccess.SYSTEM_UID) return
+
+        val packages = try {
+            appContext.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        if (ArtworkAccess.isAllowed(uid, myUid, packages)) return
+
+        val caller = packages.joinToString().ifEmpty { "uid $uid" }
+        if (loggedDenials.add(caller)) {
+            Log.w(TAG, "Artwork request refused for $caller.")
+        }
+
+        throw SecurityException("Artwork is only available to media clients.")
+    }
+
     /**
-     * Returns the read end of a pipe and writes [bytes] from a background
-     * thread, since a pipe buffer is smaller than most JPEGs.
+     * Returns the read end of a pipe and writes [bytes] on the worker,
+     * since a pipe buffer is smaller than most JPEGs. A reader that stops
+     * reading gets at most [PIPE_TIMEOUT_MS]; then the pipe is closed.
      */
     private fun pipeOf(bytes: ByteArray): ParcelFileDescriptor {
         val (readEnd, writeEnd) = ParcelFileDescriptor.createPipe()
 
-        thread(name = "ArtworkPipe", isDaemon = true) {
-            try {
-                ParcelFileDescriptor.AutoCloseOutputStream(writeEnd).use { it.write(bytes) }
-            } catch (error: IOException) {
-                // The reader closed early; nothing to do.
-                Log.w(TAG, "Artwork pipe closed early.", error)
-            }
+        try {
+            worker.execute { writeWithDeadline(writeEnd, bytes) }
+        } catch (error: Exception) {
+            writeEnd.close()
+            readEnd.close()
+            throw FileNotFoundException("Artwork could not be sent.")
         }
 
         return readEnd
+    }
+
+    /**
+     * Writes [bytes] in small chunks, each only after poll() reports room,
+     * so no write blocks; gives up when the deadline passes or the reader
+     * goes away. Always closes [writeEnd].
+     */
+    private fun writeWithDeadline(writeEnd: ParcelFileDescriptor, bytes: ByteArray) {
+        val startedAt = SystemClock.uptimeMillis()
+
+        try {
+            val fd = writeEnd.fileDescriptor
+            var offset = 0
+
+            while (offset < bytes.size) {
+                val remaining = ArtworkAccess.remainingMs(
+                    nowMs = SystemClock.uptimeMillis(),
+                    startedAtMs = startedAt,
+                    timeoutMs = PIPE_TIMEOUT_MS
+                )
+
+                if (remaining == 0L) {
+                    Log.w(TAG, "Artwork pipe write timed out; closing it.")
+                    return
+                }
+
+                val poll = StructPollfd().apply {
+                    this.fd = fd
+                    events = OsConstants.POLLOUT.toShort()
+                }
+
+                val ready = try {
+                    Os.poll(arrayOf(poll), remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                } catch (error: ErrnoException) {
+                    if (error.errno == OsConstants.EINTR) continue
+                    throw error
+                }
+
+                if (ready == 0) continue // Timed out; the check above ends it.
+
+                val problem = OsConstants.POLLERR or OsConstants.POLLHUP or OsConstants.POLLNVAL
+                if (poll.revents.toInt() and problem != 0) return // Reader went away.
+
+                offset += Os.write(fd, bytes, offset, minOf(PIPE_CHUNK, bytes.size - offset))
+            }
+        } catch (error: Exception) {
+            // Usually EPIPE: the reader closed early. Nothing to do.
+            Log.w(TAG, "Artwork pipe closed early.", error)
+        } finally {
+            try {
+                writeEnd.close()
+            } catch (_: IOException) {
+            }
+        }
     }
 
     private fun File.readBytesOrNull(): ByteArray? =
@@ -277,7 +415,7 @@ class ArtworkProvider : ContentProvider() {
         return ArtworkPaths.parse(uri.pathSegments)
     }
 
-    /** Runs on Dispatchers.IO. Null if the song is not in the library. */
+    /** Runs on the artwork worker. Null if the song is not in the library. */
     private suspend fun songArtwork(songId: String): Served? {
         val song = repository.getSong(songId) ?: return null
         val dir = artworkDir()
@@ -314,7 +452,7 @@ class ArtworkProvider : ContentProvider() {
         return cachedOrRendered(tile) { ArtworkTile.render(song.title, song.artist, skin) }
     }
 
-    /** Runs on Dispatchers.IO. Null if the playlist does not exist. */
+    /** Runs on the artwork worker. Null if the playlist does not exist. */
     private suspend fun playlistArtwork(playlistId: Long): Served? {
         val playlist = repository.getPlaylist(playlistId) ?: return null
         val skin = currentSkin()

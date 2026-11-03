@@ -45,6 +45,19 @@ object VoiceSearch {
 
     const val MAX_SEARCH_RESULTS = 50
 
+    const val EMPTY_LIBRARY_MESSAGE = "Your MyCar Music library is empty."
+
+    /**
+     * What to tell the user when nothing could be played for [query]. A
+     * blank query only finds nothing when the library is empty.
+     */
+    fun noMatchMessage(query: String): String {
+        if (normalize(query).isEmpty()) return EMPTY_LIBRARY_MESSAGE
+
+        val shown = query.trim().take(80)
+        return "Couldn't find \"$shown\" in MyCar Music."
+    }
+
     private val APOSTROPHES = setOf('\'', '’', '‘', '`')
 
     fun normalize(text: String): String {
