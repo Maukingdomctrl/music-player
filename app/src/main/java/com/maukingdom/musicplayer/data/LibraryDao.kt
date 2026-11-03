@@ -117,4 +117,43 @@ interface LibraryDao {
         """
     )
     suspend fun deletePlaylistSong(playlistId: Long, songId: String): Int
+
+    // Folder-linked playlists
+
+    @Query("SELECT * FROM folder_playlists WHERE playlistId = :playlistId LIMIT 1")
+    suspend fun getFolderLink(playlistId: Long): FolderPlaylistEntity?
+
+    @Query("SELECT * FROM folder_playlists WHERE treeUri = :treeUri LIMIT 1")
+    suspend fun getFolderLinkByTreeUri(treeUri: String): FolderPlaylistEntity?
+
+    @Query("SELECT playlistId FROM folder_playlists")
+    fun observeFolderLinkedPlaylistIds(): Flow<List<Long>>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertFolderLink(link: FolderPlaylistEntity)
+
+    @Query(
+        """
+        UPDATE folder_playlists
+        SET lastSyncedAtMs = :syncedAtMs
+        WHERE playlistId = :playlistId
+        """
+    )
+    suspend fun updateLastSynced(playlistId: Long, syncedAtMs: Long): Int
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM folder_documents
+            WHERE playlistId = :playlistId AND documentId = :documentId
+        )
+        """
+    )
+    suspend fun isDocumentKnown(playlistId: Long, documentId: String): Boolean
+
+    @Query("SELECT documentId FROM folder_documents WHERE playlistId = :playlistId")
+    suspend fun getKnownDocumentIds(playlistId: Long): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertFolderDocument(document: FolderDocumentEntity): Long
 }

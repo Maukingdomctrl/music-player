@@ -86,3 +86,63 @@ data class SongMetadata(
     val genre: String?,
     val year: Int?
 )
+
+/**
+ * Links a playlist to a user-selected SAF document tree. At most one playlist
+ * may be linked to a given tree URI.
+ */
+@Entity(
+    tableName = "folder_playlists",
+    foreignKeys = [
+        ForeignKey(
+            entity = PlaylistEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["treeUri"], unique = true)
+    ]
+)
+data class FolderPlaylistEntity(
+    @PrimaryKey
+    val playlistId: Long,
+
+    val treeUri: String,
+    val linkedAtMs: Long,
+    val lastSyncedAtMs: Long?
+)
+
+/**
+ * A document already seen in a linked folder. [songId] becomes null if the
+ * song is deleted from the library, so the document is still known and is
+ * not re-imported on the next sync.
+ */
+@Entity(
+    tableName = "folder_documents",
+    primaryKeys = ["playlistId", "documentId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = FolderPlaylistEntity::class,
+            parentColumns = ["playlistId"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = SongEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["songId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
+    indices = [
+        Index(value = ["songId"])
+    ]
+)
+data class FolderDocumentEntity(
+    val playlistId: Long,
+    val documentId: String,
+    val songId: String?,
+    val discoveredAtMs: Long
+)
