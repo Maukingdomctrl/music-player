@@ -1,0 +1,49 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Charcoal stereo fascia. -->
+    <path
+        android:fillColor="#171717"
+        android:pathData="M4,4h40v40h-40z" />
+
+    <!-- Amber display surround. -->
+    <path
+        android:fillColor="#49301B"
+        android:pathData="M7,9h34v17h-34z" />
+
+    <!-- Display glass. -->
+    <path
+        android:fillColor="#21160D"
+        android:pathData="M9,11h30v13h-30z" />
+
+    <!-- Amber equalizer bars. -->
+    <path
+        android:fillColor="#FF9F32"
+        android:pathData="M12,19h3v3h-3z
+                          M17,16h3v6h-3z
+                          M22,13h3v9h-3z
+                          M27,17h3v5h-3z
+                          M32,15h3v7h-3z" />
+
+    <!-- Volume knob. -->
+    <path
+        android:fillColor="#55514A"
+        android:pathData="M15,29a6,6 0,1 0,0 12a6,6 0,1 0,0 -12" />
+    <path
+        android:fillColor="#E7A13B"
+        android:pathData="M14.5,30h1v4h-1z" />
+
+    <!-- Illuminated controls. -->
+    <path
+        android:fillColor="#FF9F32"
+        android:pathData="M25,31h5v3h-5z
+                          M32,31h5v3h-5z" />
+    <path
+        android:fillColor="#78A84D"
+        android:pathData="M25,37h5v2h-5z
+                          M32,37h5v2h-5z" />
+
+</vector>

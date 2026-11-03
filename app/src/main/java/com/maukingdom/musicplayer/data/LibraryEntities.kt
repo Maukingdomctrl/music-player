@@ -1,0 +1,88 @@
+package com.maukingdom.musicplayer.data
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * A locally accessible audio file.
+ *
+ * The content URI is used as the stable library ID. Metadata edits are stored
+ * in Room; the original audio file is never modified.
+ */
+@Entity(tableName = "songs")
+data class SongEntity(
+    @PrimaryKey
+    val id: String,
+
+    val uri: String,
+
+    val title: String,
+    val artist: String,
+    val album: String,
+
+    val genre: String?,
+    val year: Int?,
+
+    val durationMs: Long,
+    val artworkUri: String?,
+    val mimeType: String?,
+
+    /**
+     * When true, a subsequent import keeps the user's corrected descriptive
+     * metadata rather than overwriting it with tags from the source file.
+     */
+    val metadataEdited: Boolean = false,
+
+    val dateAddedMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "playlists")
+data class PlaylistEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    val name: String,
+    val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "playlist_songs",
+    primaryKeys = ["playlistId", "songId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PlaylistEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = SongEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["songId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["playlistId", "position"]),
+        Index(value = ["songId"])
+    ]
+)
+data class PlaylistSongEntity(
+    val playlistId: Long,
+    val songId: String,
+    val position: Long
+)
+
+/**
+ * Editable descriptive fields. Duration and artwork are read from the file
+ * or media provider and are not changed by the metadata editor.
+ */
+data class SongMetadata(
+    val title: String,
+    val artist: String,
+    val album: String,
+    val genre: String?,
+    val year: Int?
+)
