@@ -49,6 +49,18 @@ class MusicRepository(
         return dao.getPlaylistSongs(playlistId)
     }
 
+    suspend fun getFolderLink(playlistId: Long): FolderPlaylistEntity? {
+        return dao.getFolderLink(playlistId)
+    }
+
+    suspend fun getKnownDocumentIds(playlistId: Long): List<String> {
+        return dao.getKnownDocumentIds(playlistId)
+    }
+
+    suspend fun getFolderLinkByTreeUri(treeUri: String): FolderPlaylistEntity? {
+        return dao.getFolderLinkByTreeUri(treeUri)
+    }
+
     /**
      * Inserts or refreshes imported songs without deleting existing playlist
      * entries. User-corrected descriptive metadata is preserved on re-import.

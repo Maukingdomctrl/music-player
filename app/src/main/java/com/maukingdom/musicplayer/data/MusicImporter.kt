@@ -8,7 +8,10 @@ import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -23,6 +26,16 @@ data class ImportResult(
 data class ImportFailure(
     val source: String,
     val message: String
+)
+
+/**
+ * The result of importing or syncing a linked folder. Files listed in
+ * [failures] were not recorded, so they are tried again on the next sync.
+ */
+data class FolderImportResult(
+    val sync: FolderSyncResult,
+    val scannedAudioFiles: Int,
+    val failures: List<ImportFailure>
 )
 
 /**
@@ -45,6 +58,10 @@ class MusicImporter(
 ) {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
+    private val folderScanner = FolderScanner(appContext)
+
+    /** Serialises folder imports and syncs so they never interleave. */
+    private val folderMutex = Mutex()
 
     suspend fun scanMediaStore(): ImportResult = withContext(Dispatchers.IO) {
         val imported = mutableListOf<SongEntity>()
@@ -264,6 +281,147 @@ class MusicImporter(
             importedCount = imported.map { it.id }.distinct().size,
             failures = failures
         )
+    }
+
+    /**
+     * Keeps read access to a user-selected folder and creates (or reuses) the
+     * playlist linked to it. Throws [FolderAccessException] if the folder
+     * cannot be listed.
+     */
+    suspend fun importFolder(
+        treeUri: Uri,
+        nowMs: Long = System.currentTimeMillis()
+    ): FolderImportResult = folderMutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                resolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (error: SecurityException) {
+                throw FolderAccessException(
+                    FolderAccessReason.PERMISSION_MISSING,
+                    "Access to this folder could not be kept. Select the folder again.",
+                    error
+                )
+            }
+
+            val listing = folderScanner.list(treeUri)
+            val treeUriString = treeUri.toString()
+
+            val knownDocumentIds = repository.getFolderLinkByTreeUri(treeUriString)
+                ?.let { link -> repository.getKnownDocumentIds(link.playlistId).toSet() }
+                .orEmpty()
+
+            val pending = listing.audioFiles.filterNot { it.documentId in knownDocumentIds }
+            val failures = mutableListOf<ImportFailure>()
+            val documents = readFolderDocuments(treeUri, pending, failures)
+
+            val sync = repository.createFolderPlaylist(
+                name = listing.folderName,
+                treeUri = treeUriString,
+                linkedAtMs = nowMs,
+                initialDocuments = documents
+            )
+
+            FolderImportResult(
+                sync = sync.copy(
+                    skippedAlreadyKnown = sync.skippedAlreadyKnown +
+                        (listing.audioFiles.size - pending.size)
+                ),
+                scannedAudioFiles = listing.audioFiles.size,
+                failures = failures
+            )
+        }
+    }
+
+    /**
+     * Adds audio files that are new in the playlist's linked folder. Files
+     * seen before are skipped without reading their metadata.
+     */
+    suspend fun syncFolderPlaylist(
+        playlistId: Long,
+        nowMs: Long = System.currentTimeMillis()
+    ): FolderImportResult = folderMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val link = repository.getFolderLink(playlistId)
+                ?: throw IllegalStateException("Playlist is not linked to a folder.")
+
+            val treeUri = Uri.parse(link.treeUri)
+            val listing = folderScanner.list(treeUri)
+
+            val knownDocumentIds = repository.getKnownDocumentIds(playlistId).toSet()
+            val pending = listing.audioFiles.filterNot { it.documentId in knownDocumentIds }
+            val failures = mutableListOf<ImportFailure>()
+            val documents = readFolderDocuments(treeUri, pending, failures)
+
+            val sync = repository.applyFolderSync(
+                playlistId = playlistId,
+                documents = documents,
+                syncedAtMs = nowMs
+            )
+
+            FolderImportResult(
+                sync = sync.copy(
+                    skippedAlreadyKnown = sync.skippedAlreadyKnown +
+                        (listing.audioFiles.size - pending.size)
+                ),
+                scannedAudioFiles = listing.audioFiles.size,
+                failures = failures
+            )
+        }
+    }
+
+    /**
+     * Reads metadata for each folder entry. A file that cannot be read is
+     * reported and left out, so it is not recorded and is retried later.
+     */
+    private suspend fun readFolderDocuments(
+        treeUri: Uri,
+        entries: List<FolderEntry>,
+        failures: MutableList<ImportFailure>
+    ): List<ScannedFolderDocument> {
+        if (entries.isEmpty()) return emptyList()
+
+        val knownSongs = repository.getAllSongs().toMutableList()
+        val documents = mutableListOf<ScannedFolderDocument>()
+
+        for (entry in entries) {
+            try {
+                val childUri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    entry.documentId
+                )
+
+                val readSong = metadataReader.read(
+                    childUri,
+                    MetadataFallback(
+                        displayName = entry.displayName,
+                        mimeType = entry.mimeType
+                    )
+                )
+                val matchedSong = matchExistingSong(childUri, knownSongs)
+                val preparedSong = preserveExistingIdentity(
+                    readSong = readSong,
+                    existingSong = matchedSong
+                )
+
+                documents += ScannedFolderDocument(
+                    documentId = entry.documentId,
+                    song = preparedSong
+                )
+                rememberImportedSong(knownSongs, preparedSong)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failures += ImportFailure(
+                    source = entry.displayName ?: entry.documentId,
+                    message = error.message ?: "Could not read audio."
+                )
+            }
+        }
+
+        return documents
     }
 
     /**
