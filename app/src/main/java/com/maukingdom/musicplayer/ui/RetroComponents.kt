@@ -194,6 +194,7 @@ fun RetroDrawerSheet(
     onClose: () -> Unit,
     onScanPhone: () -> Unit,
     onSelectFiles: () -> Unit,
+    onImportFolder: () -> Unit,
     onPlayerSkin: () -> Unit,
     onCarMode: () -> Unit
 ) {
@@ -275,9 +276,9 @@ fun RetroDrawerSheet(
             DrawerRow(
                 icon = Icons.Outlined.SdCard,
                 label = "Import SD-card folder",
-                description = "Coming in the next step",
-                enabled = false,
-                onClick = {}
+                description = if (loading) BUSY else "Creates a playlist you can sync",
+                enabled = !loading,
+                onClick = onImportFolder
             )
 
             DrawerSection("LOOK & SOUND")

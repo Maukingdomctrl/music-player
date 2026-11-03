@@ -2,9 +2,11 @@ package com.maukingdom.musicplayer.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -94,6 +96,9 @@ fun MusicPlayerScreen(
     val connectionError by musicViewModel.connectionError.collectAsStateWithLifecycle()
     val carModeEnabled by musicViewModel.carModeEnabled.collectAsStateWithLifecycle()
     val playerSkin by musicViewModel.playerSkin.collectAsStateWithLifecycle()
+    val folderOperation by musicViewModel.folderOperation.collectAsStateWithLifecycle()
+    val folderLinkedIds by musicViewModel.folderLinkedPlaylistIds
+        .collectAsStateWithLifecycle()
 
     var pageName by rememberSaveable {
         mutableStateOf(MusicPage.LIBRARY.name)
@@ -163,6 +168,44 @@ fun MusicPlayerScreen(
                 )
             }
         }
+    }
+
+    val folderLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        // Null means the user cancelled the picker.
+        if (treeUri != null) {
+            musicViewModel.importFolder(treeUri)
+        }
+    }
+
+    fun openFolderPicker(initialUri: Uri? = null) {
+        try {
+            folderLauncher.launch(initialUri)
+        } catch (_: ActivityNotFoundException) {
+            musicViewModel.showError("No folder picker is available.")
+        }
+    }
+
+    /** Clears both the folder result and the banner that mirrors it. */
+    fun dismissOperationMessages() {
+        musicViewModel.clearOperationMessages()
+        musicViewModel.clearFolderOperation()
+    }
+
+    /**
+     * True when [error] is a sync failure that PlaylistsScreen is already
+     * showing inline with a RE-SELECT FOLDER button, so the banner would
+     * only duplicate it.
+     */
+    fun folderFailureShownInline(error: String): Boolean {
+        val failure = inlineFolderFailure(folderOperation) ?: return false
+
+        return page == MusicPage.PLAYLISTS &&
+            editingSong == null &&
+            error == failure.message &&
+            playlists.any { it.id == failure.playlistId } &&
+            (selectedPlaylistId == null || selectedPlaylistId == failure.playlistId)
     }
 
     fun requestLibraryScan() {
@@ -274,6 +317,7 @@ fun MusicPlayerScreen(
                     onClose = { closeDrawerAnd {} },
                     onScanPhone = { closeDrawerAnd(::requestLibraryScan) },
                     onSelectFiles = { closeDrawerAnd(::openDocumentPicker) },
+                    onImportFolder = { closeDrawerAnd { openFolderPicker() } },
                     onPlayerSkin = { closeDrawerAnd(::openSettings) },
                     onCarMode = { closeDrawerAnd(::openCarMode) }
                 )
@@ -311,17 +355,19 @@ fun MusicPlayerScreen(
                         StereoMessage(
                             message = message,
                             isError = false,
-                            onDismiss = musicViewModel::clearOperationMessages
+                            onDismiss = ::dismissOperationMessages
                         )
                     }
 
-                    operation.error?.let { error ->
-                        StereoMessage(
-                            message = error,
-                            isError = true,
-                            onDismiss = musicViewModel::clearOperationMessages
-                        )
-                    }
+                    operation.error
+                        ?.takeIf { error -> !folderFailureShownInline(error) }
+                        ?.let { error ->
+                            StereoMessage(
+                                message = error,
+                                isError = true,
+                                onDismiss = ::dismissOperationMessages
+                            )
+                        }
 
                     if (operation.loading) {
                         Row(
@@ -384,6 +430,16 @@ fun MusicPlayerScreen(
                                     musicViewModel.playSongs(selectedPlaylistSongs, index)
                                     navigateTo(MusicPage.PLAYER)
                                 },
+                                folderLinkedIds = folderLinkedIds,
+                                folderOperation = folderOperation,
+                                loading = operation.loading,
+                                onImportFolder = { openFolderPicker() },
+                                onSyncFolder = musicViewModel::syncFolderPlaylist,
+                                onReselectFolder = {
+                                    dismissOperationMessages()
+                                    openFolderPicker()
+                                },
+                                onDismissFolderProblem = ::dismissOperationMessages,
                                 modifier = Modifier.weight(1f)
                             )
 

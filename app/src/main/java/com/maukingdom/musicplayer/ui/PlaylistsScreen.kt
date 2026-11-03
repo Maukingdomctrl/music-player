@@ -19,10 +19,32 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
+
+/** Folder failures the user can fix by selecting the folder again. */
+private val RESELECTABLE_REASONS = setOf(
+    FolderFailureReason.PERMISSION_MISSING,
+    FolderFailureReason.FOLDER_UNAVAILABLE
+)
+
+/**
+ * The failed sync that should be shown inline on its playlist, or null.
+ * Import failures have no playlist yet and stay in the banner.
+ */
+internal fun inlineFolderFailure(
+    folderOperation: FolderOperationState
+): FolderOperationState.Failed? {
+    return (folderOperation as? FolderOperationState.Failed)?.takeIf {
+        it.playlistId != null && it.reason in RESELECTABLE_REASONS
+    }
+}
 
 @Composable
 fun PlaylistsScreen(
@@ -36,6 +58,13 @@ fun PlaylistsScreen(
     onRemoveSong: (Long, String) -> Unit,
     onReorder: (Long, List<String>) -> Unit,
     onPlay: (Int) -> Unit,
+    folderLinkedIds: Set<Long>,
+    folderOperation: FolderOperationState,
+    loading: Boolean,
+    onImportFolder: () -> Unit,
+    onSyncFolder: (Long) -> Unit,
+    onReselectFolder: (Long) -> Unit,
+    onDismissFolderProblem: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var creating by remember { mutableStateOf(false) }
@@ -46,11 +75,26 @@ fun PlaylistsScreen(
         it.id == selectedPlaylistId
     }
 
+    val syncingPlaylistId = (folderOperation as? FolderOperationState.Running)
+        ?.takeIf { it.kind == FolderOperationKind.SYNC }
+        ?.playlistId
+
+    val folderFailure = inlineFolderFailure(folderOperation)
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (selectedPlaylist == null) {
+            StereoButton(
+                text = "IMPORT FOLDER FROM SD CARD",
+                onClick = onImportFolder,
+                enabled = !loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Import a folder from the SD card" }
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -70,7 +114,7 @@ fun PlaylistsScreen(
 
             if (playlists.isEmpty()) {
                 StereoEmptyState(
-                    message = "No playlists yet. Create one to get started.",
+                    message = "No playlists yet. Import a folder from your SD card or create one.",
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -82,6 +126,8 @@ fun PlaylistsScreen(
                         items = playlists,
                         key = { _, playlist -> playlist.id }
                     ) { _, playlist ->
+                        val folderLinked = playlist.id in folderLinkedIds
+
                         Surface(
                             color = StereoColors.Panel,
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(5.dp)
@@ -98,6 +144,18 @@ fun PlaylistsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+
+                                if (folderLinked) {
+                                    SdFolderLabel()
+                                }
+
+                                if (folderFailure?.playlistId == playlist.id) {
+                                    FolderProblem(
+                                        message = folderFailure.message,
+                                        onReselect = { onReselectFolder(playlist.id) },
+                                        onDismiss = onDismissFolderProblem
+                                    )
+                                }
 
                                 Row {
                                     TextButton(
@@ -118,6 +176,15 @@ fun PlaylistsScreen(
                                         onClick = { deleting = playlist }
                                     ) {
                                         Text("DELETE")
+                                    }
+
+                                    if (folderLinked) {
+                                        SyncTextButton(
+                                            playlistName = playlist.name,
+                                            syncing = syncingPlaylistId == playlist.id,
+                                            enabled = !loading,
+                                            onClick = { onSyncFolder(playlist.id) }
+                                        )
                                     }
                                 }
                             }
@@ -146,10 +213,32 @@ fun PlaylistsScreen(
                     overflow = TextOverflow.Ellipsis
                 )
 
+                if (selectedPlaylist.id in folderLinkedIds) {
+                    val syncing = syncingPlaylistId == selectedPlaylist.id
+
+                    StereoButton(
+                        text = if (syncing) "SYNCING…" else "SYNC",
+                        onClick = { onSyncFolder(selectedPlaylist.id) },
+                        enabled = !loading,
+                        modifier = Modifier.semantics {
+                            contentDescription =
+                                "Sync ${selectedPlaylist.name} with its SD-card folder"
+                        }
+                    )
+                }
+
                 StereoButton(
                     text = "PLAY ALL",
                     onClick = { onPlay(0) },
                     enabled = selectedSongs.isNotEmpty()
+                )
+            }
+
+            if (folderFailure?.playlistId == selectedPlaylist.id) {
+                FolderProblem(
+                    message = folderFailure.message,
+                    onReselect = { onReselectFolder(selectedPlaylist.id) },
+                    onDismiss = onDismissFolderProblem
                 )
             }
 
@@ -295,6 +384,62 @@ fun PlaylistsScreen(
                     Text("CANCEL")
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun SdFolderLabel() {
+    Text(
+        text = "SD FOLDER",
+        color = StereoColors.Green,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp
+    )
+}
+
+@Composable
+private fun SyncTextButton(
+    playlistName: String,
+    syncing: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled && !syncing,
+        modifier = Modifier.semantics {
+            contentDescription = "Sync $playlistName with its SD-card folder"
+        }
+    ) {
+        Text(if (syncing) "SYNCING…" else "SYNC")
+    }
+}
+
+/** Folder access was lost or the card is missing; offer to pick it again. */
+@Composable
+private fun FolderProblem(
+    message: String,
+    onReselect: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        StereoMessage(
+            message = message,
+            isError = true,
+            onDismiss = onDismiss
+        )
+
+        StereoButton(
+            text = "RE-SELECT FOLDER",
+            onClick = onReselect,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }
