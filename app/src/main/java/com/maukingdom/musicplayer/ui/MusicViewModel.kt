@@ -28,10 +28,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -119,6 +121,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val libraryOperation: StateFlow<LibraryOperationState> =
         mutableLibraryOperation.asStateFlow()
 
+    /** Shares the libraryOperation.loading guard with runImport. */
+    private val folderController = FolderSyncController(
+        scope = viewModelScope,
+        isBusy = { mutableLibraryOperation.value.loading },
+        setBusy = { busy ->
+            if (busy) {
+                mutableLibraryOperation.value = LibraryOperationState(loading = true)
+            } else {
+                mutableLibraryOperation.update { it.copy(loading = false) }
+            }
+        }
+    )
+
+    val folderOperation: StateFlow<FolderOperationState> = folderController.state
+
+    val folderLinkedPlaylistIds: StateFlow<Set<Long>> =
+        repository.observeFolderLinkedPlaylistIds()
+            .map { ids -> ids.toSet() }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptySet()
+            )
+
     private val mutableEditingSong = MutableStateFlow<SongEntity?>(null)
     val editingSong: StateFlow<SongEntity?> = mutableEditingSong.asStateFlow()
 
@@ -170,6 +196,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 delay(500L)
             }
         }
+
+        viewModelScope.launch {
+            folderController.state.collect(::onFolderOperationState)
+        }
+    }
+
+    /** Mirrors folder results into the existing message/error banners. */
+    private suspend fun onFolderOperationState(state: FolderOperationState) {
+        when (state) {
+            is FolderOperationState.Succeeded -> {
+                val playlistId = state.summary.playlistId
+
+                if (state.kind == FolderOperationKind.IMPORT) {
+                    selectPlaylist(playlistId)
+                }
+
+                val name = try {
+                    repository.playlists.first()
+                        .firstOrNull { it.id == playlistId }
+                        ?.name
+                } catch (error: Exception) {
+                    null
+                }
+
+                mutableLibraryOperation.update {
+                    it.copy(
+                        message = folderSummaryText(name, state.summary),
+                        error = null
+                    )
+                }
+            }
+
+            is FolderOperationState.Failed -> {
+                mutableLibraryOperation.update {
+                    it.copy(message = null, error = state.message)
+                }
+            }
+
+            FolderOperationState.Idle,
+            is FolderOperationState.Running -> Unit
+        }
     }
 
     private fun updatePlaybackState(player: Player) {
@@ -216,12 +283,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun importFolder(treeUri: Uri) {
+        val started = folderController.run(FolderOperationKind.IMPORT, null) {
+            importer.importFolder(treeUri)
+        }
+
+        if (!started) {
+            showError(ANOTHER_OPERATION_RUNNING)
+        }
+    }
+
+    fun syncFolderPlaylist(playlistId: Long) {
+        val started = folderController.run(FolderOperationKind.SYNC, playlistId) {
+            importer.syncFolderPlaylist(playlistId)
+        }
+
+        if (!started) {
+            showError(ANOTHER_OPERATION_RUNNING)
+        }
+    }
+
+    fun clearFolderOperation() {
+        folderController.clear()
+    }
+
     private fun runImport(operation: suspend () -> ImportResult) {
-        if (mutableLibraryOperation.value.loading) return
+        if (
+            mutableLibraryOperation.value.loading ||
+            folderController.state.value is FolderOperationState.Running
+        ) {
+            return
+        }
+
+        // Set synchronously so the shared guard is closed before launch.
+        mutableLibraryOperation.value = LibraryOperationState(loading = true)
 
         viewModelScope.launch {
-            mutableLibraryOperation.value = LibraryOperationState(loading = true)
-
             try {
                 val result = operation()
 
@@ -244,12 +341,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Keeps [LibraryOperationState.loading] so a running operation stays guarded. */
     fun showError(message: String) {
-        mutableLibraryOperation.value = LibraryOperationState(error = message)
+        mutableLibraryOperation.update {
+            LibraryOperationState(loading = it.loading, error = message)
+        }
     }
 
     fun clearOperationMessages() {
-        mutableLibraryOperation.value = LibraryOperationState()
+        mutableLibraryOperation.update {
+            LibraryOperationState(loading = it.loading)
+        }
     }
 
     fun clearRecoveryNotice() {
@@ -508,5 +610,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         observedPlayer = null
         connection.close()
         super.onCleared()
+    }
+
+    private companion object {
+        const val ANOTHER_OPERATION_RUNNING =
+            "Another library operation is already running."
     }
 }

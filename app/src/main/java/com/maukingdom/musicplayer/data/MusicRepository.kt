@@ -61,6 +61,10 @@ class MusicRepository(
         return dao.getFolderLinkByTreeUri(treeUri)
     }
 
+    fun observeFolderLinkedPlaylistIds(): Flow<List<Long>> {
+        return dao.observeFolderLinkedPlaylistIds()
+    }
+
     /**
      * Inserts or refreshes imported songs without deleting existing playlist
      * entries. User-corrected descriptive metadata is preserved on re-import.
