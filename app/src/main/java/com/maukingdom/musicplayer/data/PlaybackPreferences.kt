@@ -48,7 +48,10 @@ data class PlaybackSnapshot(
 data class AppPreferences(
     val carModeEnabled: Boolean = false,
     /** Stored skin ID; null when the user has never chosen one. */
-    val playerSkinId: String? = null
+    val playerSkinId: String? = null,
+    /** Bass and treble in whole dB, -6..+6. */
+    val bassDb: Int = 0,
+    val trebleDb: Int = 0
 )
 
 /**
@@ -70,6 +73,8 @@ class PlaybackPreferences(context: Context) {
         val shuffleOrder = stringPreferencesKey("shuffle_order")
         val carModeEnabled = booleanPreferencesKey("car_mode_enabled")
         val playerSkin = stringPreferencesKey("player_skin")
+        val bassDb = intPreferencesKey("tone_bass_db")
+        val trebleDb = intPreferencesKey("tone_treble_db")
     }
 
     private val preferences: Flow<Preferences> = dataStore.data.catch { error ->
@@ -105,7 +110,9 @@ class PlaybackPreferences(context: Context) {
     val appPreferences: Flow<AppPreferences> = preferences.map { values ->
         AppPreferences(
             carModeEnabled = values[Keys.carModeEnabled] ?: false,
-            playerSkinId = values[Keys.playerSkin]
+            playerSkinId = values[Keys.playerSkin],
+            bassDb = (values[Keys.bassDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
+            trebleDb = (values[Keys.trebleDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB)
         )
     }
 
@@ -151,6 +158,25 @@ class PlaybackPreferences(context: Context) {
         dataStore.edit { values ->
             values[Keys.playerSkin] = id
         }
+    }
+
+    /** Stored clamped to -6..+6 dB. */
+    suspend fun setBassDb(db: Int) {
+        dataStore.edit { values ->
+            values[Keys.bassDb] = db.coerceIn(TONE_MIN_DB, TONE_MAX_DB)
+        }
+    }
+
+    /** Stored clamped to -6..+6 dB. */
+    suspend fun setTrebleDb(db: Int) {
+        dataStore.edit { values ->
+            values[Keys.trebleDb] = db.coerceIn(TONE_MIN_DB, TONE_MAX_DB)
+        }
+    }
+
+    private companion object {
+        const val TONE_MIN_DB = -6
+        const val TONE_MAX_DB = 6
     }
 
     private fun encodeStringList(items: List<String>): String {

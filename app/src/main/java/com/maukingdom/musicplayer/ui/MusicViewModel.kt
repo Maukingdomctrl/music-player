@@ -178,6 +178,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = PlayerSkin.NEON_WALKMAN
         )
 
+    /** Bass in whole dB, -6..+6. */
+    val bassDb: StateFlow<Int> = preferences.appPreferences
+        .map { it.bassDb }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = 0
+        )
+
+    /** Treble in whole dB, -6..+6. */
+    val trebleDb: StateFlow<Int> = preferences.appPreferences
+        .map { it.trebleDb }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = 0
+        )
+
+    /** Null until the playback service has tried; false if the phone refused. */
+    val toneControlAvailable: StateFlow<Boolean?> = PlaybackService.toneControlAvailable
+
     private val mutableCurrentArtwork = MutableStateFlow<ImageBitmap?>(null)
 
     /**
@@ -725,6 +746,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 preferences.setPlayerSkin(skin.id)
             } catch (error: Exception) {
                 showError(error.message ?: "Could not save the player skin.")
+            }
+        }
+    }
+
+    fun setBassDb(db: Int) {
+        viewModelScope.launch {
+            try {
+                preferences.setBassDb(db)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the bass setting.")
+            }
+        }
+    }
+
+    fun setTrebleDb(db: Int) {
+        viewModelScope.launch {
+            try {
+                preferences.setTrebleDb(db)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the treble setting.")
             }
         }
     }

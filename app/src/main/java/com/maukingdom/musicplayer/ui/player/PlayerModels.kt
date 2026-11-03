@@ -24,7 +24,12 @@ data class PlayerUi(
     val volume: Float,
     val artwork: ImageBitmap?,
     val connected: Boolean,
-    val error: String?
+    val error: String?,
+    /** Bass and treble in whole dB, -6..+6. */
+    val bassDb: Int = 0,
+    val trebleDb: Int = 0,
+    /** False only when the phone refused the equaliser. */
+    val toneAvailable: Boolean = true
 ) {
     val hasQueue: Boolean get() = trackCount > 0
 }
@@ -38,13 +43,18 @@ interface PlayerActions {
     fun toggleShuffle()
     fun cycleRepeat()
     fun setVolume(fraction: Float)
+    fun setBassDb(db: Int)
+    fun setTrebleDb(db: Int)
     fun clearQueue()
     fun openSkinPicker()
 }
 
 fun PlaybackUiState.toPlayerUi(
     artwork: ImageBitmap?,
-    playlistName: String?
+    playlistName: String?,
+    bassDb: Int = 0,
+    trebleDb: Int = 0,
+    toneAvailable: Boolean = true
 ): PlayerUi = PlayerUi(
     title = title,
     artist = artist,
@@ -60,7 +70,10 @@ fun PlaybackUiState.toPlayerUi(
     volume = volume,
     artwork = artwork,
     connected = connected,
-    error = error
+    error = error,
+    bassDb = bassDb,
+    trebleDb = trebleDb,
+    toneAvailable = toneAvailable
 )
 
 /** Total time, or "--:--" while the duration is unknown (not prepared yet). */

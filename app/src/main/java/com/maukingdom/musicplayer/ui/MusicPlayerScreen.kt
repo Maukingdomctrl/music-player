@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.maukingdom.musicplayer.playback.ToneControl
 import com.maukingdom.musicplayer.ui.player.PlayerActions
 import com.maukingdom.musicplayer.ui.player.SkinPlayer
 import com.maukingdom.musicplayer.ui.player.toPlayerUi
@@ -101,6 +102,10 @@ fun MusicPlayerScreen(
     val playerSkin by musicViewModel.playerSkin.collectAsStateWithLifecycle()
     val folderOperation by musicViewModel.folderOperation.collectAsStateWithLifecycle()
     val folderLinkedIds by musicViewModel.folderLinkedPlaylistIds
+        .collectAsStateWithLifecycle()
+    val bassDb by musicViewModel.bassDb.collectAsStateWithLifecycle()
+    val trebleDb by musicViewModel.trebleDb.collectAsStateWithLifecycle()
+    val toneControlAvailable by musicViewModel.toneControlAvailable
         .collectAsStateWithLifecycle()
 
     var pageName by rememberSaveable {
@@ -322,7 +327,9 @@ fun MusicPlayerScreen(
                     onSelectFiles = { closeDrawerAnd(::openDocumentPicker) },
                     onImportFolder = { closeDrawerAnd { openFolderPicker() } },
                     onPlayerSkin = { closeDrawerAnd(::openSettings) },
-                    onCarMode = { closeDrawerAnd(::openCarMode) }
+                    onCarMode = { closeDrawerAnd(::openCarMode) },
+                    toneSummary = "${ToneControl.formatDb(bassDb)} / ${ToneControl.formatDb(trebleDb)}",
+                    onBassTreble = { closeDrawerAnd { navigateTo(MusicPage.PLAYER) } }
                 )
             }
         ) {
@@ -463,6 +470,9 @@ fun MusicPlayerScreen(
                                         override fun cycleRepeat() = musicViewModel.cycleRepeat()
                                         override fun setVolume(fraction: Float) =
                                             musicViewModel.setVolume(fraction)
+                                        override fun setBassDb(db: Int) = musicViewModel.setBassDb(db)
+                                        override fun setTrebleDb(db: Int) =
+                                            musicViewModel.setTrebleDb(db)
                                         override fun clearQueue() = musicViewModel.clearQueue()
                                         override fun openSkinPicker() = openSettings()
                                     }
@@ -472,7 +482,10 @@ fun MusicPlayerScreen(
                                     skin = playerSkin,
                                     ui = playback.toPlayerUi(
                                         artwork = artwork,
-                                        playlistName = queuePlaylistName
+                                        playlistName = queuePlaylistName,
+                                        bassDb = bassDb,
+                                        trebleDb = trebleDb,
+                                        toneAvailable = toneControlAvailable != false
                                     ),
                                     actions = playerActions,
                                     modifier = Modifier

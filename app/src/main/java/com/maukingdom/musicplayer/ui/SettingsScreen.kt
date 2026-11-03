@@ -43,6 +43,9 @@ import androidx.compose.ui.unit.sp
 private const val SKIN_FOOTER =
     "The skin changes the app's colours. Your music and playlists are not affected."
 
+private const val SAMSUNG_TONE_TIP =
+    "Samsung tip: if Dolby Atmos or Adapt Sound is on, it can override bass/treble."
+
 @Composable
 fun SettingsScreen(
     selectedSkin: PlayerSkin,
@@ -110,6 +113,12 @@ fun SettingsScreen(
                         text = SKIN_FOOTER,
                         color = tokens.muted,
                         style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = SAMSUNG_TONE_TIP,
+                        color = tokens.muted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
             }

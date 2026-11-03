@@ -196,7 +196,10 @@ fun RetroDrawerSheet(
     onSelectFiles: () -> Unit,
     onImportFolder: () -> Unit,
     onPlayerSkin: () -> Unit,
-    onCarMode: () -> Unit
+    onCarMode: () -> Unit,
+    /** Shown on the right of "Bass & treble", for example "+3 / −2". */
+    toneSummary: String = "0 / 0",
+    onBassTreble: () -> Unit = {}
 ) {
     val tokens = LocalSkinTokens.current
     val shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
@@ -292,9 +295,9 @@ fun RetroDrawerSheet(
             DrawerRow(
                 icon = Icons.Outlined.GraphicEq,
                 label = "Bass & treble",
-                description = "Coming soon",
-                enabled = false,
-                onClick = {}
+                description = "Adjust with the knobs on the player",
+                trailing = toneSummary,
+                onClick = onBassTreble
             )
 
             DrawerSection("DRIVING")

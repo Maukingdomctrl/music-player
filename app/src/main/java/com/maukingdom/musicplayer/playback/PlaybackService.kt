@@ -2,6 +2,8 @@ package com.maukingdom.musicplayer.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.Bundle
 import android.os.Process
@@ -47,6 +49,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -93,6 +97,26 @@ class PlaybackService : MediaLibraryService() {
 
         fun clearRecoveryNotice() {
             mutableRecoveryNotice.value = null
+        }
+
+        private val mutableToneControlAvailable = MutableStateFlow<Boolean?>(null)
+
+        /**
+         * Whether bass/treble can be applied: null until the service has
+         * tried, false if the phone refused the equaliser.
+         */
+        val toneControlAvailable: StateFlow<Boolean?> =
+            mutableToneControlAvailable.asStateFlow()
+    }
+
+    // Bass and treble (see ToneControl). Main thread only.
+    private var equalizer: Equalizer? = null
+    private var toneBassDb = 0
+    private var toneTrebleDb = 0
+
+    private val toneListener = object : Player.Listener {
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            attachEqualizer(audioSessionId)
         }
     }
 
@@ -446,6 +470,20 @@ class PlaybackService : MediaLibraryService() {
 
         player.addListener(playerListener)
 
+        player.addListener(toneListener)
+        attachEqualizer(player.audioSessionId)
+
+        mainScope.launch {
+            preferences.appPreferences
+                .map { it.bassDb to it.trebleDb }
+                .distinctUntilChanged()
+                .collect { (bass, treble) ->
+                    toneBassDb = bass
+                    toneTrebleDb = treble
+                    applyTone()
+                }
+        }
+
         val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .build()
             .apply {
@@ -483,6 +521,71 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
         }
+    }
+
+    // Bass and treble
+
+    /** (Re)creates the equaliser on [sessionId] and applies the current tone. */
+    private fun attachEqualizer(sessionId: Int) {
+        releaseEqualizer()
+
+        if (destroyed || sessionId == C.AUDIO_SESSION_ID_UNSET) return
+
+        try {
+            equalizer = Equalizer(0, sessionId)
+            applyTone()
+        } catch (error: Exception) {
+            toneUnavailable(error)
+        }
+    }
+
+    /**
+     * Sets every band from the current bass/treble values. The effect is
+     * enabled only when either value is non-zero.
+     */
+    private fun applyTone() {
+        val eq = equalizer ?: return
+
+        try {
+            val range = eq.bandLevelRange
+            val bands = eq.numberOfBands.toInt()
+            // getCenterFreq is in milliHertz.
+            val centreHz = List(bands) { eq.getCenterFreq(it.toShort()) / 1_000 }
+
+            val levels = ToneControl.bandLevels(
+                centreHz = centreHz,
+                minMb = range[0].toInt(),
+                maxMb = range[1].toInt(),
+                bassDb = toneBassDb,
+                trebleDb = toneTrebleDb
+            )
+
+            levels.forEachIndexed { band, level ->
+                eq.setBandLevel(band.toShort(), level.toShort())
+            }
+
+            val status = eq.setEnabled(ToneControl.isActive(toneBassDb, toneTrebleDb))
+            check(status == AudioEffect.SUCCESS) { "Equalizer setEnabled returned $status." }
+
+            mutableToneControlAvailable.value = true
+        } catch (error: Exception) {
+            toneUnavailable(error)
+        }
+    }
+
+    private fun toneUnavailable(error: Exception) {
+        Log.w(TAG, "Bass/treble is not available.", error)
+        releaseEqualizer()
+        mutableToneControlAvailable.value = false
+    }
+
+    private fun releaseEqualizer() {
+        try {
+            equalizer?.release()
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not release the equalizer.", error)
+        }
+        equalizer = null
     }
 
     override fun onGetSession(
@@ -1271,6 +1374,8 @@ class PlaybackService : MediaLibraryService() {
         mainScope.cancel()
 
         player.removeListener(playerListener)
+        player.removeListener(toneListener)
+        releaseEqualizer()
         mediaSession?.release()
         mediaSession = null
         player.release()

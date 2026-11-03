@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -76,7 +77,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -93,6 +98,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import com.maukingdom.musicplayer.playback.ToneControl
 import com.maukingdom.musicplayer.ui.BrandFont
 import com.maukingdom.musicplayer.ui.ShareTechMono
 import com.maukingdom.musicplayer.ui.StereoColors
@@ -356,7 +362,14 @@ private fun ColumnScope.PanelContent(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ToneKnob(label = "BASS", color = Cyan, description = "Bass — coming soon")
+        ToneKnob(
+            label = "BASS",
+            spokenName = "Bass",
+            db = ui.bassDb,
+            color = Cyan,
+            available = ui.toneAvailable,
+            onDbChange = actions::setBassDb
+        )
 
         Column(
             modifier = Modifier
@@ -397,7 +410,14 @@ private fun ColumnScope.PanelContent(
             )
         }
 
-        ToneKnob(label = "TREBLE", color = Pink, description = "Treble — coming soon")
+        ToneKnob(
+            label = "TREBLE",
+            spokenName = "Treble",
+            db = ui.trebleDb,
+            color = Pink,
+            available = ui.toneAvailable,
+            onDbChange = actions::setTrebleDb
+        )
     }
 }
 
@@ -525,13 +545,13 @@ private fun VfdDisplay(ui: PlayerUi, compact: Boolean) {
 
     val title = when {
         !ui.connected -> "CONNECTING…"
-        !ui.hasQueue -> "SELECT A TRACK"
+        !ui.hasQueue -> "PICK A SONG FROM LIBRARY"
         else -> ui.title.ifBlank { "Unknown title" }.uppercase()
     }
 
     val subtitle = when {
         ui.error != null -> "Playback error: ${ui.error}"
-        !ui.hasQueue -> "Choose a song in Library or Lists"
+        !ui.hasQueue -> "or open a playlist in Lists"
         else -> ui.artist.ifBlank { "Unknown artist" }
     }
 
@@ -881,31 +901,142 @@ private fun PlayPauseButton(
     }
 }
 
-/** BASS / TREBLE: disabled until the Sound-1 step wires them up. */
+/**
+ * BASS / TREBLE: -6..+6 dB in 1 dB steps with one haptic tick per step and
+ * a wider catch zone at 0. Double-tap resets to 0. [RetroDial] only draws
+ * it; the gestures and the dB slider semantics are handled here.
+ */
 @Composable
-private fun ToneKnob(label: String, color: Color, description: String) {
+private fun ToneKnob(
+    label: String,
+    spokenName: String,
+    db: Int,
+    color: Color,
+    available: Boolean,
+    onDbChange: (Int) -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val currentDb by rememberUpdatedState(db)
+    val currentOnChange by rememberUpdatedState(onDbChange)
+
+    // The value shown while a drag is in progress.
+    var dragDb by remember { mutableStateOf<Int?>(null) }
+    val shownDb = dragDb ?: db
+
+    fun set(newDb: Int) {
+        val clamped = ToneControl.clampDb(newDb)
+        if (clamped != currentDb) currentOnChange(clamped)
+    }
+
+    val gestures = if (available) {
+        Modifier
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        if (currentDb != 0) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentOnChange(0)
+                        }
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                var raw = 0f
+                var last = 0
+
+                fun angleAt(position: Offset): Float = RetroDialMath.angleOf(
+                    position.x - size.width / 2f,
+                    position.y - size.height / 2f
+                )
+
+                fun emit() {
+                    val next = ToneControl.dbForFraction(raw)
+                    dragDb = next
+
+                    if (next != last) {
+                        last = next
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        currentOnChange(next)
+                    }
+                }
+
+                detectDragGestures(
+                    onDragStart = { start ->
+                        last = currentDb
+                        raw = RetroDialMath.angleToFraction(angleAt(start))
+                        emit()
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        raw = RetroDialMath.dragFraction(raw, angleAt(change.position))
+                        emit()
+                    },
+                    onDragEnd = { dragDb = null },
+                    onDragCancel = { dragDb = null }
+                )
+            }
+    } else {
+        Modifier
+    }
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        RetroDial(
-            value = 0.5f,
-            arcColor = color,
-            size = 72.dp,
-            steps = 1,
-            contentDescription = description,
-            stateDescription = "0",
-            enabled = false
-        )
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .then(gestures)
+                .clearAndSetSemantics {
+                    if (available) {
+                        contentDescription = spokenName
+                        stateDescription = spokenDb(shownDb)
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            current = shownDb.toFloat(),
+                            range = ToneControl.MIN_DB.toFloat()..ToneControl.MAX_DB.toFloat(),
+                            steps = ToneControl.STEPS - 1
+                        )
+                        setProgress { target ->
+                            set(target.roundToInt())
+                            true
+                        }
+                        customActions = listOf(
+                            CustomAccessibilityAction("Reset $spokenName to 0") {
+                                set(0)
+                                true
+                            }
+                        )
+                    } else {
+                        contentDescription = "Sound effects not available on this phone"
+                        disabled()
+                    }
+                }
+        ) {
+            RetroDial(
+                value = ToneControl.fractionForDb(shownDb),
+                arcColor = color,
+                size = 72.dp,
+                steps = ToneControl.STEPS,
+                contentDescription = spokenName,
+                stateDescription = spokenDb(shownDb),
+                enabled = available
+            )
+        }
 
         Text(
-            text = "$label 0",
+            text = "$label ${ToneControl.formatDb(shownDb)}",
             color = PanelText,
             fontFamily = ShareTechMono,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
             modifier = Modifier
-                .alpha(0.4f)
+                .alpha(if (available) 1f else 0.4f)
                 .clearAndSetSemantics { }
         )
     }
+}
+
+private fun spokenDb(db: Int): String = when {
+    db > 0 -> "plus $db dB"
+    db < 0 -> "minus ${-db} dB"
+    else -> "0 dB"
 }
 
 @Composable
