@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         PlaylistSongEntity::class
     ],
     version = 1,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class MusicDatabase : RoomDatabase() {
 
