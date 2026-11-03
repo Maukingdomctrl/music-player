@@ -2,8 +2,12 @@ package com.maukingdom.musicplayer.ui
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioManager
 import android.net.Uri
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
@@ -17,6 +21,7 @@ import com.maukingdom.musicplayer.data.PlaybackPreferences
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.data.SongMetadata
+import com.maukingdom.musicplayer.playback.ArtworkPaths
 import com.maukingdom.musicplayer.playback.MediaItemMapper
 import com.maukingdom.musicplayer.playback.PlaybackService
 import com.maukingdom.musicplayer.playback.PlayerConnection
@@ -28,6 +33,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -170,6 +178,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = PlayerSkin.NEON_WALKMAN
         )
 
+    private val mutableCurrentArtwork = MutableStateFlow<ImageBitmap?>(null)
+
+    /**
+     * The current song's cover from [ArtworkPaths.songUri], at most 512 px.
+     * Null when nothing is playing or the image cannot be read.
+     */
+    val currentArtwork: StateFlow<ImageBitmap?> = mutableCurrentArtwork.asStateFlow()
+
+    /** The playlist the current queue was started from, if any. */
+    private data class QueueSource(val songIds: List<String>, val playlistId: Long)
+
+    /** Main thread only. Cleared once the player's queue no longer matches it. */
+    private var queueSource: QueueSource? = null
+    private val mutableQueuePlaylistId = MutableStateFlow<Long?>(null)
+
+    /**
+     * Name of the playlist the queue was started from in this app, or null
+     * (whole library, or a queue set by another controller such as Android
+     * Auto).
+     */
+    val queuePlaylistName: StateFlow<String?> =
+        combine(mutableQueuePlaylistId, repository.playlists) { playlistId, all ->
+            playlistId?.let { id -> all.firstOrNull { it.id == id }?.name }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null
+        )
+
     private var observedPlayer: Player? = null
 
     private val playerListener = object : Player.Listener {
@@ -207,6 +244,64 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             folderController.state.collect(::onFolderOperationState)
+        }
+
+        viewModelScope.launch {
+            // collectLatest cancels the previous load when the song changes.
+            mutablePlaybackState
+                .map { it.currentSongId }
+                .distinctUntilChanged()
+                .collectLatest { songId ->
+                    mutableCurrentArtwork.value = if (songId == null) {
+                        null
+                    } else {
+                        withContext(Dispatchers.IO) { loadArtwork(songId) }
+                    }
+                }
+        }
+    }
+
+    /** Runs on Dispatchers.IO. Null on any error. */
+    private fun loadArtwork(songId: String): ImageBitmap? {
+        return try {
+            val uri = Uri.parse(ArtworkPaths.songUri(songId))
+            val resolver = appContext.contentResolver
+
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                ?: return null
+
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= ARTWORK_MAX_PX &&
+                bounds.outHeight / (sample * 2) >= ARTWORK_MAX_PX
+            ) {
+                sample *= 2
+            }
+
+            val decoded = resolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                })
+            } ?: return null
+
+            val longest = maxOf(decoded.width, decoded.height)
+            val bitmap = if (longest > ARTWORK_MAX_PX) {
+                val scale = ARTWORK_MAX_PX.toFloat() / longest
+                Bitmap.createScaledBitmap(
+                    decoded,
+                    (decoded.width * scale).toInt().coerceAtLeast(1),
+                    (decoded.height * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else {
+                decoded
+            }
+
+            bitmap.asImageBitmap()
+        } catch (error: Exception) {
+            null
         }
     }
 
@@ -250,6 +345,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun updatePlaybackState(player: Player) {
         val metadata = player.mediaMetadata
         val duration = player.duration
+
+        queueSource?.let { source ->
+            val stillSameQueue = player.mediaItemCount == source.songIds.size &&
+                player.currentMediaItem?.mediaId ==
+                source.songIds.getOrNull(player.currentMediaItemIndex)
+
+            if (!stillSameQueue) {
+                queueSource = null
+                mutableQueuePlaylistId.value = null
+            }
+        }
 
         mutablePlaybackState.value = PlaybackUiState(
             connected = true,
@@ -373,6 +479,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // Remember the playlist only when these are exactly its songs.
+        val songIds = songsToPlay.map { it.id }
+        val sourcePlaylistId = mutableSelectedPlaylistId.value?.takeIf {
+            selectedPlaylistSongs.value.map { song -> song.id } == songIds
+        }
+
         viewModelScope.launch {
             try {
                 val safeIndex = startIndex.coerceIn(0, songsToPlay.lastIndex)
@@ -391,7 +503,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                if (!connection.playQueue(items, safeIndex)) {
+                if (connection.playQueue(items, safeIndex)) {
+                    queueSource = sourcePlaylistId?.let { QueueSource(songIds, it) }
+                    mutableQueuePlaylistId.value = sourcePlaylistId
+                } else {
                     showError("Playback service is not connected yet.")
                 }
             } catch (error: Exception) {
@@ -634,5 +749,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val ANOTHER_OPERATION_RUNNING =
             "Another library operation is already running."
+
+        const val ARTWORK_MAX_PX = 512
     }
 }

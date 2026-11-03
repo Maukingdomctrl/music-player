@@ -43,6 +43,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.maukingdom.musicplayer.ui.player.PlayerActions
+import com.maukingdom.musicplayer.ui.player.SkinPlayer
+import com.maukingdom.musicplayer.ui.player.toPlayerUi
 import kotlinx.coroutines.launch
 
 private enum class MusicPage {
@@ -443,29 +446,38 @@ fun MusicPlayerScreen(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            MusicPage.PLAYER -> Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                PlayerScreen(
-                                    playback = playback,
-                                    onPlayPause = musicViewModel::togglePlayPause,
-                                    onPrevious = musicViewModel::previous,
-                                    onNext = musicViewModel::next,
-                                    onSeek = musicViewModel::seekTo,
-                                    onShuffle = musicViewModel::toggleShuffle,
-                                    onRepeat = musicViewModel::cycleRepeat,
-                                    onVolumeChange = musicViewModel::setVolume,
-                                    modifier = Modifier.weight(1f)
-                                )
+                            MusicPage.PLAYER -> {
+                                val artwork by musicViewModel.currentArtwork
+                                    .collectAsStateWithLifecycle()
+                                val queuePlaylistName by musicViewModel.queuePlaylistName
+                                    .collectAsStateWithLifecycle()
 
-                                StereoButton(
-                                    text = "CLEAR QUEUE",
-                                    onClick = musicViewModel::clearQueue,
-                                    enabled = playback.connected,
-                                    modifier = Modifier.fillMaxWidth()
+                                val playerActions = remember(musicViewModel) {
+                                    object : PlayerActions {
+                                        override fun playPause() = musicViewModel.togglePlayPause()
+                                        override fun next() = musicViewModel.next()
+                                        override fun previous() = musicViewModel.previous()
+                                        override fun seekTo(positionMs: Long) =
+                                            musicViewModel.seekTo(positionMs)
+                                        override fun toggleShuffle() = musicViewModel.toggleShuffle()
+                                        override fun cycleRepeat() = musicViewModel.cycleRepeat()
+                                        override fun setVolume(fraction: Float) =
+                                            musicViewModel.setVolume(fraction)
+                                        override fun clearQueue() = musicViewModel.clearQueue()
+                                        override fun openSkinPicker() = openSettings()
+                                    }
+                                }
+
+                                SkinPlayer(
+                                    skin = playerSkin,
+                                    ui = playback.toPlayerUi(
+                                        artwork = artwork,
+                                        playlistName = queuePlaylistName
+                                    ),
+                                    actions = playerActions,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
                                 )
                             }
 
