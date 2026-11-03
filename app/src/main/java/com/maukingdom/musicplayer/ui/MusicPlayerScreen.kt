@@ -450,7 +450,22 @@ fun MusicPlayerScreen(
                                     openFolderPicker()
                                 },
                                 onDismissFolderProblem = ::dismissOperationMessages,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
+                                currentSongId = playback.currentSongId,
+                                onShufflePlay = {
+                                    val songsToShuffle = selectedPlaylistSongs
+                                    if (songsToShuffle.isNotEmpty()) {
+                                        // Start on a random song with shuffle on.
+                                        musicViewModel.playSongs(
+                                            songsToShuffle,
+                                            songsToShuffle.indices.random()
+                                        )
+                                        if (!playback.shuffleEnabled) {
+                                            musicViewModel.toggleShuffle()
+                                        }
+                                        navigateTo(MusicPage.PLAYER)
+                                    }
+                                }
                             )
 
                             MusicPage.PLAYER -> {
