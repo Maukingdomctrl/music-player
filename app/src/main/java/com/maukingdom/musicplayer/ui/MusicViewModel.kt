@@ -467,6 +467,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * RE-SELECT FOLDER: points the existing folder playlist at [treeUri] and
+     * syncs it, instead of importing a second playlist.
+     */
+    fun relinkFolder(playlistId: Long, treeUri: Uri) {
+        val started = folderController.run(FolderOperationKind.SYNC, playlistId) {
+            importer.relinkFolder(playlistId, treeUri)
+        }
+
+        if (!started) {
+            showError(ANOTHER_OPERATION_RUNNING)
+        }
+    }
+
     fun clearFolderOperation() {
         folderController.clear()
     }
@@ -494,8 +508,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     null
                 }
 
+                val skipped = if (result.skippedRemoved > 0) {
+                    " ${result.skippedRemoved} removed song(s) were left out."
+                } else {
+                    ""
+                }
+
                 mutableLibraryOperation.value = LibraryOperationState(
-                    message = "Imported ${result.importedCount} item(s).",
+                    message = "Imported ${result.importedCount} item(s).$skipped",
                     error = warning
                 )
             } catch (error: Exception) {
@@ -702,8 +722,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeSong(songId: String) {
         runLibraryAction {
+            val song = repository.getSong(songId)
+
             check(repository.removeSong(songId)) {
                 "The song is no longer in the library."
+            }
+
+            // "Scan this phone" will not add it back; an explicit import will.
+            preferences.addRemovedSongId(songId)
+
+            if (song != null) {
+                importer.releaseFileGrant(song.uri)
             }
         }
     }

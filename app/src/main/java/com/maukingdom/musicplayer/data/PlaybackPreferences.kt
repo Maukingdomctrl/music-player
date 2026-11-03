@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
@@ -95,6 +96,7 @@ class PlaybackPreferences(context: Context) {
         val shuffleOrder = stringPreferencesKey("shuffle_order")
         val carModeEnabled = booleanPreferencesKey("car_mode_enabled")
         val playerSkin = stringPreferencesKey("player_skin")
+        val removedSongIds = stringSetPreferencesKey("removed_song_ids")
         val bassDb = intPreferencesKey("tone_bass_db")
         val trebleDb = intPreferencesKey("tone_treble_db")
     }
@@ -202,6 +204,33 @@ class PlaybackPreferences(context: Context) {
     suspend fun setPlayerSkin(id: String) {
         dataStore.edit { values ->
             values[Keys.playerSkin] = id
+        }
+    }
+
+    /**
+     * IDs of songs the user removed from the library. "Scan this phone"
+     * does not add these back; an explicit import of the same file does,
+     * and takes it off this list.
+     */
+    suspend fun getRemovedSongIds(): Set<String> =
+        preferences.first()[Keys.removedSongIds].orEmpty()
+
+    suspend fun addRemovedSongId(songId: String) {
+        dataStore.edit { values ->
+            values[Keys.removedSongIds] = values[Keys.removedSongIds].orEmpty() + songId
+        }
+    }
+
+    suspend fun forgetRemovedSongIds(songIds: Collection<String>) {
+        if (songIds.isEmpty()) return
+
+        dataStore.edit { values ->
+            val current = values[Keys.removedSongIds] ?: return@edit
+            val remaining = current - songIds.toSet()
+
+            if (remaining.size != current.size) {
+                values[Keys.removedSongIds] = remaining
+            }
         }
     }
 

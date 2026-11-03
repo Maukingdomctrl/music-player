@@ -20,8 +20,38 @@ import kotlinx.coroutines.withContext
  */
 data class ImportResult(
     val importedCount: Int,
-    val failures: List<ImportFailure>
+    val failures: List<ImportFailure>,
+    /** Songs a phone scan found but left out because the user removed them. */
+    val skippedRemoved: Int = 0
 )
+
+/**
+ * Rules for the persisted file-access grants that "Select files" keeps.
+ * Android caps them per app (512 on Android 11+) and drops the oldest
+ * first, which could include folder grants. Pure, for JVM tests.
+ */
+internal object GrantPolicy {
+
+    const val WARN_ABOVE = 400
+
+    fun shouldWarn(persistedGrants: Int): Boolean = persistedGrants > WARN_ABOVE
+
+    fun warning(persistedGrants: Int): String =
+        "The app keeps access to $persistedGrants files picked one by one. Android " +
+            "limits this, so for large sets use \"Import SD-card folder\" instead."
+
+    /**
+     * A removed song's grant is released only if it is a single-file grant
+     * for that song, is not a folder (tree) grant, is not a folder
+     * playlist's folder, and no other library song still uses the file.
+     */
+    fun mayRelease(
+        grantMatchesSong: Boolean,
+        isTreeGrant: Boolean,
+        usedByFolderPlaylist: Boolean,
+        stillUsedBySong: Boolean
+    ): Boolean = grantMatchesSong && !isTreeGrant && !usedByFolderPlaylist && !stillUsedBySong
+}
 
 data class ImportFailure(
     val source: String,
@@ -114,6 +144,7 @@ class MusicImporter(
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val folderScanner = FolderScanner(appContext)
+    private val preferences = PlaybackPreferences(appContext)
 
     /** Serialises folder imports and syncs so they never interleave. */
     private val folderMutex = Mutex()
@@ -128,6 +159,8 @@ class MusicImporter(
          * without changing or merging existing database records.
          */
         val matcher = newMatcher()
+        val removed = removedSongsMatcher()
+        var skippedRemoved = 0
 
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -222,8 +255,16 @@ class MusicImporter(
                     )
 
                     try {
-                        val readSong = metadataReader.read(uri, fallback)
                         val matchedSong = matcher.match(uri.toString())
+
+                        // A song the user removed stays removed: a phone
+                        // scan never adds it back (an explicit import does).
+                        if (matchedSong == null && removed.match(uri.toString()) != null) {
+                            skippedRemoved++
+                            continue
+                        }
+
+                        val readSong = metadataReader.read(uri, fallback)
                         val preparedSong = preserveExistingIdentity(
                             readSong = readSong,
                             existingSong = matchedSong
@@ -231,6 +272,8 @@ class MusicImporter(
 
                         imported += preparedSong
                         matcher.remember(preparedSong)
+                    } catch (error: CancellationException) {
+                        throw error
                     } catch (error: Exception) {
                         failures += ImportFailure(
                             source = uri.toString(),
@@ -239,6 +282,8 @@ class MusicImporter(
                     }
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: SecurityException) {
             failures += ImportFailure(
                 source = "MediaStore",
@@ -255,7 +300,8 @@ class MusicImporter(
 
         ImportResult(
             importedCount = imported.map { it.id }.distinct().size,
-            failures = failures
+            failures = failures,
+            skippedRemoved = skippedRemoved
         )
     }
 
@@ -273,6 +319,7 @@ class MusicImporter(
         val imported = mutableListOf<SongEntity>()
         val failures = mutableListOf<ImportFailure>()
         val matcher = newMatcher()
+        val removed = removedSongsMatcher()
 
         for (uri in uris.distinct()) {
             if (uri.scheme != "content") {
@@ -332,6 +379,22 @@ class MusicImporter(
 
         repository.saveImportedSongs(imported)
 
+        // Picking a file explicitly brings back a song removed earlier.
+        forgetRemoved(imported, removed)
+
+        val grants = try {
+            resolver.persistedUriPermissions.size
+        } catch (_: Exception) {
+            0
+        }
+
+        if (GrantPolicy.shouldWarn(grants)) {
+            failures += ImportFailure(
+                source = "Android",
+                message = GrantPolicy.warning(grants)
+            )
+        }
+
         ImportResult(
             importedCount = imported.map { it.id }.distinct().size,
             failures = failures
@@ -378,6 +441,9 @@ class MusicImporter(
                 linkedAtMs = nowMs,
                 initialDocuments = documents
             )
+
+            // Importing a folder explicitly brings back songs removed earlier.
+            forgetRemoved(documents.map { it.song }, removedSongsMatcher())
 
             FolderImportResult(
                 sync = sync.copy(
@@ -477,6 +543,139 @@ class MusicImporter(
         }
 
         return documents
+    }
+
+    /**
+     * Points an existing folder playlist at [treeUri] (the folder was
+     * renamed, moved, or access was lost) and syncs it, instead of creating
+     * a second playlist. Files whose song is already recorded for this
+     * playlist under an older document ID are treated as known, so they are
+     * neither duplicated nor re-added after a manual removal.
+     *
+     * Throws [FolderAccessException] if the folder cannot be listed, and
+     * [IllegalStateException] if another playlist is already linked to it.
+     */
+    suspend fun relinkFolder(
+        playlistId: Long,
+        treeUri: Uri,
+        nowMs: Long = System.currentTimeMillis()
+    ): FolderImportResult = folderMutex.withLock {
+        withContext(Dispatchers.IO) {
+            repository.getFolderLink(playlistId)
+                ?: throw IllegalStateException("Playlist is not linked to a folder.")
+
+            val treeUriString = treeUri.toString()
+            val other = repository.getFolderLinkByTreeUri(treeUriString)
+
+            if (other != null && other.playlistId != playlistId) {
+                throw IllegalStateException(
+                    "That folder is already linked to another playlist."
+                )
+            }
+
+            try {
+                resolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (error: SecurityException) {
+                throw FolderAccessException(
+                    FolderAccessReason.PERMISSION_MISSING,
+                    "Access to this folder could not be kept. Select the folder again.",
+                    error
+                )
+            }
+
+            val listing = folderScanner.list(treeUri)
+
+            val knownDocumentIds = repository.getKnownDocumentIds(playlistId).toSet()
+            val pending = listing.audioFiles.filterNot { it.documentId in knownDocumentIds }
+            val failures = mutableListOf<ImportFailure>()
+            val documents = readFolderDocuments(treeUri, pending, failures)
+
+            val sync = repository.relinkFolderPlaylist(
+                playlistId = playlistId,
+                treeUri = treeUriString,
+                documents = documents,
+                syncedAtMs = nowMs
+            )
+
+            FolderImportResult(
+                sync = sync.copy(
+                    skippedAlreadyKnown = sync.skippedAlreadyKnown +
+                        (listing.audioFiles.size - pending.size)
+                ),
+                scannedAudioFiles = listing.audioFiles.size,
+                failures = failures
+            )
+        }
+    }
+
+    /**
+     * Releases the persisted access grant of a removed song picked with
+     * "Select files", so it does not count towards Android's limit.
+     * Folder (tree) grants are never released. Blocking.
+     */
+    suspend fun releaseFileGrant(songUri: String) = withContext(Dispatchers.IO) {
+        try {
+            val uri = Uri.parse(songUri)
+            val isTree = try {
+                DocumentsContract.isTreeUri(uri)
+            } catch (_: Exception) {
+                false
+            }
+
+            val grant = resolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+                ?: return@withContext
+
+            val usedByFolder = repository.getFolderLinkByTreeUri(songUri) != null
+            val usedBySong = repository.getAllSongs().any { it.uri == songUri }
+
+            if (GrantPolicy.mayRelease(
+                    grantMatchesSong = grant.isReadPermission,
+                    isTreeGrant = isTree,
+                    usedByFolderPlaylist = usedByFolder,
+                    stillUsedBySong = usedBySong
+                )
+            ) {
+                resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Best effort: a grant that cannot be released is harmless.
+        }
+    }
+
+    /** Library-shaped stand-ins for the removed songs, matched with the same rules. */
+    private suspend fun removedSongsMatcher(): SongMatcher {
+        val placeholders = preferences.getRemovedSongIds().map { id ->
+            SongEntity(
+                id = id,
+                uri = id,
+                title = "",
+                artist = "",
+                album = "",
+                genre = null,
+                year = null,
+                durationMs = 0L,
+                artworkUri = null,
+                mimeType = null
+            )
+        }
+
+        return SongMatcher(placeholders) { uri -> equivalentMediaStoreUri(Uri.parse(uri)) }
+    }
+
+    /** Takes explicitly imported songs (and the removed records they match) off the removed list. */
+    private suspend fun forgetRemoved(songs: List<SongEntity>, removed: SongMatcher) {
+        if (songs.isEmpty()) return
+
+        val ids = songs.flatMap { song ->
+            listOfNotNull(song.id, removed.match(song.uri)?.id, removed.match(song.id)?.id)
+        }
+
+        preferences.forgetRemovedSongIds(ids)
     }
 
     /**

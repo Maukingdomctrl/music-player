@@ -23,6 +23,40 @@ data class FolderSyncResult(
 )
 
 /**
+ * The record to store when [imported] re-reads a song that is already in
+ * the library as [existing]. Pure, for JVM tests.
+ *
+ * - User-corrected text (title, artist, album, genre, year) is kept when
+ *   [SongEntity.metadataEdited] is set.
+ * - The original date added is always kept.
+ * - A known album-art link is never replaced by an empty one: a file picked
+ *   with "Select files" has no MediaStore album art, but the same song
+ *   found by a phone scan does.
+ */
+internal fun mergeImportedSong(existing: SongEntity, imported: SongEntity): SongEntity {
+    val artworkUri = imported.artworkUri?.takeIf { it.isNotBlank() } ?: existing.artworkUri
+
+    return if (existing.metadataEdited) {
+        imported.copy(
+            title = existing.title,
+            artist = existing.artist,
+            album = existing.album,
+            genre = existing.genre,
+            year = existing.year,
+            artworkUri = artworkUri,
+            metadataEdited = true,
+            dateAddedMs = existing.dateAddedMs
+        )
+    } else {
+        imported.copy(
+            artworkUri = artworkUri,
+            metadataEdited = false,
+            dateAddedMs = existing.dateAddedMs
+        )
+    }
+}
+
+/**
  * Application-facing operations for the local library and playlists.
  */
 class MusicRepository(
@@ -104,24 +138,7 @@ class MusicRepository(
                 if (existing == null) {
                     dao.insertSong(imported)
                 } else {
-                    val merged = if (existing.metadataEdited) {
-                        imported.copy(
-                            title = existing.title,
-                            artist = existing.artist,
-                            album = existing.album,
-                            genre = existing.genre,
-                            year = existing.year,
-                            metadataEdited = true,
-                            dateAddedMs = existing.dateAddedMs
-                        )
-                    } else {
-                        imported.copy(
-                            metadataEdited = false,
-                            dateAddedMs = existing.dateAddedMs
-                        )
-                    }
-
-                    dao.updateSong(merged)
+                    dao.updateSong(mergeImportedSong(existing, imported))
                 }
             }
         }
@@ -336,13 +353,55 @@ class MusicRepository(
     }
 
     /**
+     * Points folder playlist [playlistId] at a new [treeUri] (renamed or
+     * moved folder) and adds its new documents, in one transaction. A
+     * document whose song is already recorded for this playlist under an
+     * older document ID is recorded as known and not added again, so songs
+     * the user removed from the playlist stay removed and nothing is
+     * duplicated.
+     */
+    suspend fun relinkFolderPlaylist(
+        playlistId: Long,
+        treeUri: String,
+        documents: List<ScannedFolderDocument>,
+        syncedAtMs: Long
+    ): FolderSyncResult {
+        return database.withTransaction {
+            checkNotNull(dao.getFolderLink(playlistId)) {
+                "Playlist is not linked to a folder."
+            }
+
+            val other = dao.getFolderLinkByTreeUri(treeUri)
+            check(other == null || other.playlistId == playlistId) {
+                "That folder is already linked to another playlist."
+            }
+
+            dao.updateFolderTreeUri(playlistId, treeUri)
+
+            val result = applyFolderDocuments(
+                playlistId = playlistId,
+                documents = documents,
+                discoveredAtMs = syncedAtMs,
+                recordedSongsAreKnown = true
+            )
+
+            dao.updateLastSynced(playlistId, syncedAtMs)
+
+            result
+        }
+    }
+
+    /**
      * Per-document folder sync rules. Must be called inside a transaction.
-     * Existing songs are reused by exact ID and never updated.
+     * Existing songs are reused by exact ID and never updated. With
+     * [recordedSongsAreKnown] (relink only), a new document for a song that
+     * is already recorded for this playlist counts as already known.
      */
     private suspend fun applyFolderDocuments(
         playlistId: Long,
         documents: List<ScannedFolderDocument>,
-        discoveredAtMs: Long
+        discoveredAtMs: Long,
+        recordedSongsAreKnown: Boolean = false
     ): FolderSyncResult {
         var addedToPlaylist = 0
         var skippedAlreadyKnown = 0
@@ -359,6 +418,20 @@ class MusicRepository(
             }
 
             val song = document.song
+
+            if (recordedSongsAreKnown && dao.isSongRecordedInFolder(playlistId, song.id)) {
+                // Same song, new document ID (the folder was renamed or moved).
+                dao.insertFolderDocument(
+                    FolderDocumentEntity(
+                        playlistId = playlistId,
+                        documentId = document.documentId,
+                        songId = song.id,
+                        discoveredAtMs = discoveredAtMs
+                    )
+                )
+                skippedAlreadyKnown++
+                continue
+            }
 
             if (dao.insertSong(song) != -1L) {
                 newSongsInserted++

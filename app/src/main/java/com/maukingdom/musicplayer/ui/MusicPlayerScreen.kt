@@ -178,12 +178,23 @@ fun MusicPlayerScreen(
         }
     }
 
+    // Set while the picker is open for RE-SELECT FOLDER; saved across
+    // process death so the result still relinks the right playlist.
+    var relinkPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
+
     val folderLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { treeUri ->
+        val relinkId = relinkPlaylistId
+        relinkPlaylistId = null
+
         // Null means the user cancelled the picker.
         if (treeUri != null) {
-            musicViewModel.importFolder(treeUri)
+            if (relinkId != null) {
+                musicViewModel.relinkFolder(relinkId, treeUri)
+            } else {
+                musicViewModel.importFolder(treeUri)
+            }
         }
     }
 
@@ -191,6 +202,7 @@ fun MusicPlayerScreen(
         try {
             folderLauncher.launch(initialUri)
         } catch (_: ActivityNotFoundException) {
+            relinkPlaylistId = null
             musicViewModel.showError("No folder picker is available.")
         }
     }
@@ -445,8 +457,9 @@ fun MusicPlayerScreen(
                                 loading = operation.loading,
                                 onImportFolder = { openFolderPicker() },
                                 onSyncFolder = musicViewModel::syncFolderPlaylist,
-                                onReselectFolder = {
+                                onReselectFolder = { playlistId ->
                                     dismissOperationMessages()
+                                    relinkPlaylistId = playlistId
                                     openFolderPicker()
                                 },
                                 onDismissFolderProblem = ::dismissOperationMessages,

@@ -174,6 +174,19 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFolderLink(link: FolderPlaylistEntity)
 
+    @Query("UPDATE folder_playlists SET treeUri = :treeUri WHERE playlistId = :playlistId")
+    suspend fun updateFolderTreeUri(playlistId: Long, treeUri: String): Int
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM folder_documents
+            WHERE playlistId = :playlistId AND songId = :songId
+        )
+        """
+    )
+    suspend fun isSongRecordedInFolder(playlistId: Long, songId: String): Boolean
+
     @Query(
         """
         UPDATE folder_playlists
