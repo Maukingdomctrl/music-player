@@ -51,6 +51,14 @@
             </intent-filter>
         </service>
 
+        <!-- Read-only cover art for Android Auto and system media controls.
+             Exported because those clients run in other processes; it serves
+             only JPEG artwork for songs and playlists in the library. -->
+        <provider
+            android:name=".playback.ArtworkProvider"
+            android:authorities="com.maukingdom.musicplayer.artwork"
+            android:exported="true" />
+
         <!-- Declares the app as an Android Auto media app. -->
         <meta-data
             android:name="com.google.android.gms.car.application"

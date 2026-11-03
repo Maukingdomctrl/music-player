@@ -643,11 +643,16 @@ class PlaybackService : MediaLibraryService() {
             .setIsBrowsable(true)
             .setIsPlayable(false)
             .setMediaType(mediaType)
-            .build()
+
+        if (id is BrowseId.Playlist) {
+            metadata.setArtworkUri(Uri.parse(ArtworkPaths.playlistUri(id.playlistId)))
+        }
+
+        val built = metadata.build()
 
         return MediaItem.Builder()
             .setMediaId(BrowseTree.encode(id))
-            .setMediaMetadata(metadata)
+            .setMediaMetadata(built)
             .build()
     }
 
@@ -660,10 +665,7 @@ class PlaybackService : MediaLibraryService() {
             .setIsBrowsable(false)
             .setIsPlayable(true)
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-
-        song.artworkUri
-            ?.takeIf { it.isNotBlank() }
-            ?.let { metadata.setArtworkUri(Uri.parse(it)) }
+            .setArtworkUri(Uri.parse(ArtworkPaths.songUri(song.id)))
 
         return MediaItem.Builder()
             .setMediaId(BrowseTree.encode(id))

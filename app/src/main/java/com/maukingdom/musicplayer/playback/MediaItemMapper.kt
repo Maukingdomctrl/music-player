@@ -9,8 +9,8 @@ import com.maukingdom.musicplayer.data.SongEntity
  * Converts a Room song record to a Media3 item.
  *
  * Artwork bytes may be supplied by the caller after reading embedded artwork
- * off the main thread. Otherwise, a MediaStore artwork URI is used when one
- * is available.
+ * off the main thread. Every item also gets an [ArtworkProvider] URI, which
+ * other apps (Android Auto, the system media controls) can read.
  */
 object MediaItemMapper {
 
@@ -29,11 +29,9 @@ object MediaItemMapper {
                 embeddedArtwork,
                 MediaMetadata.PICTURE_TYPE_FRONT_COVER
             )
-        } else {
-            song.artworkUri
-                ?.takeIf { it.isNotBlank() }
-                ?.let { metadata.setArtworkUri(Uri.parse(it)) }
         }
+
+        metadata.setArtworkUri(Uri.parse(ArtworkPaths.songUri(song.id)))
 
         return MediaItem.Builder()
             .setMediaId(song.id)
