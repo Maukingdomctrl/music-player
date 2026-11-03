@@ -39,6 +39,61 @@ data class FolderImportResult(
 )
 
 /**
+ * Finds the existing library record for an incoming URI during one import
+ * or sync run. Pure Kotlin, so it is unit-tested on the JVM.
+ *
+ * Rules (unchanged from before):
+ * 1. Exactly one record whose ID or playback URI equals the incoming URI.
+ *    Several such records: no match.
+ * 2. Otherwise, exactly one record whose equivalent MediaStore URI equals
+ *    the incoming one's. None or several: no match.
+ *
+ * [mediaUriOf] (a binder call on Android) is asked at most once per distinct
+ * URI string per run, instead of once per known song for every new file.
+ */
+internal class SongMatcher(
+    knownSongs: List<SongEntity>,
+    private val mediaUriOf: (String) -> String?
+) {
+    private val songs = knownSongs.toMutableList()
+    private val mediaUris = HashMap<String, String?>()
+
+    fun match(incomingUri: String): SongEntity? {
+        val exactMatches = songs.filter { song ->
+            song.id == incomingUri || song.uri == incomingUri
+        }
+
+        if (exactMatches.size == 1) return exactMatches.single()
+        if (exactMatches.size > 1) return null
+
+        val incomingMediaUri = cachedMediaUri(incomingUri) ?: return null
+
+        return songs.filter { song -> cachedMediaUri(song.uri) == incomingMediaUri }
+            .singleOrNull()
+    }
+
+    /**
+     * Replaces the record with the same ID, or adds it, so later files in
+     * the same run see it. Never removes other records.
+     */
+    fun remember(song: SongEntity) {
+        val index = songs.indexOfFirst { it.id == song.id }
+
+        if (index >= 0) {
+            songs[index] = song
+        } else {
+            songs += song
+        }
+    }
+
+    private fun cachedMediaUri(uri: String): String? {
+        // containsKey, because "no MediaStore URI" (null) is cached too.
+        if (mediaUris.containsKey(uri)) return mediaUris[uri]
+        return mediaUriOf(uri).also { mediaUris[uri] = it }
+    }
+}
+
+/**
  * Imports local MediaStore audio or user-selected SAF document URIs.
  *
  * Identity matching is deliberately conservative:
@@ -72,7 +127,7 @@ class MusicImporter(
          * import. This permits conservative matching within the same import
          * without changing or merging existing database records.
          */
-        val knownSongs = repository.getAllSongs().toMutableList()
+        val matcher = newMatcher()
 
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -168,14 +223,14 @@ class MusicImporter(
 
                     try {
                         val readSong = metadataReader.read(uri, fallback)
-                        val matchedSong = matchExistingSong(uri, knownSongs)
+                        val matchedSong = matcher.match(uri.toString())
                         val preparedSong = preserveExistingIdentity(
                             readSong = readSong,
                             existingSong = matchedSong
                         )
 
                         imported += preparedSong
-                        rememberImportedSong(knownSongs, preparedSong)
+                        matcher.remember(preparedSong)
                     } catch (error: Exception) {
                         failures += ImportFailure(
                             source = uri.toString(),
@@ -217,7 +272,7 @@ class MusicImporter(
     ): ImportResult = withContext(Dispatchers.IO) {
         val imported = mutableListOf<SongEntity>()
         val failures = mutableListOf<ImportFailure>()
-        val knownSongs = repository.getAllSongs().toMutableList()
+        val matcher = newMatcher()
 
         for (uri in uris.distinct()) {
             if (uri.scheme != "content") {
@@ -259,14 +314,14 @@ class MusicImporter(
                 )
 
                 val readSong = metadataReader.read(uri, fallback)
-                val matchedSong = matchExistingSong(uri, knownSongs)
+                val matchedSong = matcher.match(uri.toString())
                 val preparedSong = preserveExistingIdentity(
                     readSong = readSong,
                     existingSong = matchedSong
                 )
 
                 imported += preparedSong
-                rememberImportedSong(knownSongs, preparedSong)
+                matcher.remember(preparedSong)
             } catch (error: Exception) {
                 failures += ImportFailure(
                     source = uri.toString(),
@@ -383,7 +438,7 @@ class MusicImporter(
     ): List<ScannedFolderDocument> {
         if (entries.isEmpty()) return emptyList()
 
-        val knownSongs = repository.getAllSongs().toMutableList()
+        val matcher = newMatcher()
         val documents = mutableListOf<ScannedFolderDocument>()
 
         for (entry in entries) {
@@ -400,7 +455,7 @@ class MusicImporter(
                         mimeType = entry.mimeType
                     )
                 )
-                val matchedSong = matchExistingSong(childUri, knownSongs)
+                val matchedSong = matcher.match(childUri.toString())
                 val preparedSong = preserveExistingIdentity(
                     readSong = readSong,
                     existingSong = matchedSong
@@ -410,7 +465,7 @@ class MusicImporter(
                     documentId = entry.documentId,
                     song = preparedSong
                 )
-                rememberImportedSong(knownSongs, preparedSong)
+                matcher.remember(preparedSong)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -425,37 +480,13 @@ class MusicImporter(
     }
 
     /**
-     * Finds an existing record only when there is one unambiguous match.
-     *
-     * Exact stored IDs or playback URIs are checked first. If multiple
-     * existing records match, none is selected automatically.
+     * A matcher for one import or sync run, over the library as it is now.
+     * Must be called on Dispatchers.IO (it reads the database).
      */
-    private fun matchExistingSong(
-        incomingUri: Uri,
-        knownSongs: List<SongEntity>
-    ): SongEntity? {
-        val incomingString = incomingUri.toString()
-
-        val exactMatches = knownSongs.filter { song ->
-            song.id == incomingString || song.uri == incomingString
+    private suspend fun newMatcher(): SongMatcher {
+        return SongMatcher(repository.getAllSongs()) { uri ->
+            equivalentMediaStoreUri(Uri.parse(uri))
         }
-
-        if (exactMatches.size == 1) {
-            return exactMatches.single()
-        }
-
-        if (exactMatches.size > 1) {
-            return null
-        }
-
-        val incomingMediaUri = equivalentMediaStoreUri(incomingUri)
-            ?: return null
-
-        val mediaMatches = knownSongs.filter { song ->
-            equivalentMediaStoreUri(Uri.parse(song.uri)) == incomingMediaUri
-        }
-
-        return mediaMatches.singleOrNull()
     }
 
     /**
@@ -520,23 +551,6 @@ class MusicImporter(
             } ?: false
         } catch (_: Exception) {
             false
-        }
-    }
-
-    /**
-     * Replaces the in-memory representation of the same library ID, but
-     * does not remove any other record that might represent the same file.
-     */
-    private fun rememberImportedSong(
-        knownSongs: MutableList<SongEntity>,
-        importedSong: SongEntity
-    ) {
-        val index = knownSongs.indexOfFirst { it.id == importedSong.id }
-
-        if (index >= 0) {
-            knownSongs[index] = importedSong
-        } else {
-            knownSongs += importedSong
         }
     }
 

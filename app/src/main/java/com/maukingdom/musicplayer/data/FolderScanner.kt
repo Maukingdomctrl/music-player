@@ -218,13 +218,31 @@ private val AUDIO_EXTENSIONS = setOf(
 )
 
 /**
+ * Playlists, cue sheets, lyrics, notes and pictures that often sit next to
+ * songs. Some providers label playlists as audio (audio/x-mpegurl,
+ * audio/x-scpls), so these are excluded whatever the MIME type says.
+ */
+private val NON_AUDIO_EXTENSIONS = setOf(
+    "m3u", "m3u8", "pls", "cue", "txt", "lrc", "nfo",
+    "jpg", "jpeg", "png"
+)
+
+/**
  * True for audio MIME types. When the provider gives no useful MIME type,
- * the file extension decides. Directories are never audio.
+ * the file extension decides. Directories, and the playlist, text and
+ * image files in [NON_AUDIO_EXTENSIONS], are never audio.
  */
 internal fun isAudioCandidate(mimeType: String?, displayName: String?): Boolean {
     val mime = mimeType?.trim()?.lowercase()
 
     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) return false
+
+    val extension = displayName
+        ?.trim()
+        ?.substringAfterLast('.', missingDelimiterValue = "")
+        ?.lowercase()
+
+    if (extension in NON_AUDIO_EXTENSIONS) return false
     if (mime != null && mime.startsWith("audio/")) return true
 
     val usesExtension = mime.isNullOrEmpty() ||
@@ -232,11 +250,6 @@ internal fun isAudioCandidate(mimeType: String?, displayName: String?): Boolean 
         mime == "application/ogg"
 
     if (!usesExtension) return false
-
-    val extension = displayName
-        ?.trim()
-        ?.substringAfterLast('.', missingDelimiterValue = "")
-        ?.lowercase()
 
     return extension in AUDIO_EXTENSIONS
 }

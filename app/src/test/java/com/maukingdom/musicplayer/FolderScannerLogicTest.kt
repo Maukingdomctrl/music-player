@@ -36,6 +36,41 @@ class FolderScannerLogicTest {
     }
 
     @Test
+    fun playlistTextAndImageFilesAreNeverAudio() {
+        val names = listOf(
+            "Hits.m3u", "Hits.M3U8", "radio.pls", "album.cue", "readme.txt",
+            "song.lrc", "info.nfo", "cover.jpg", "Folder.JPEG", "art.png"
+        )
+        val mimes = listOf(
+            null,
+            "",
+            "application/octet-stream",
+            // Some providers label playlists as audio.
+            "audio/x-mpegurl",
+            "audio/mpegurl",
+            "audio/x-scpls",
+            "audio/mpeg"
+        )
+
+        for (name in names) {
+            for (mime in mimes) {
+                assertFalse("$name as $mime", isAudioCandidate(mime, name))
+            }
+        }
+    }
+
+    @Test
+    fun realSongsStillCountWithTheSameMimeTypes() {
+        assertTrue(isAudioCandidate(null, "Kajra Re.mp3"))
+        assertTrue(isAudioCandidate("application/octet-stream", "Zingaat.m4a"))
+        assertTrue(isAudioCandidate("audio/mpeg", "Dil Se Re.mp3"))
+        assertTrue(isAudioCandidate("audio/mpeg", null))
+        // Names with dots and odd characters.
+        assertTrue(isAudioCandidate(null, "01. Tujhe Dekha To (Remix) [128k].mp3"))
+        assertTrue(isAudioCandidate("audio/flac", "lyrics.txt.flac"))
+    }
+
+    @Test
     fun folderNameFallbackUsesLastPathSegment() {
         assertEquals("Hindi 90s", folderNameFallback("1234-ABCD:Music/MyCarMusic/Hindi 90s"))
         assertEquals("Old Classics", folderNameFallback("primary:Old Classics"))

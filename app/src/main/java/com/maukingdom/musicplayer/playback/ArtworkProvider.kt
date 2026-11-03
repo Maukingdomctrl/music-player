@@ -6,10 +6,10 @@ import android.content.Context
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import com.maukingdom.musicplayer.data.MetadataReader
 import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaybackPreferences
@@ -106,6 +106,13 @@ object ArtworkPaths {
         }
     }
 
+    /**
+     * Whether to remember that a song has no artwork (the ".none" marker)
+     * after a lookup found none. Only when the song file itself opened: a
+     * missing SD card or lost access must not hide a real cover for good.
+     */
+    fun rememberNoArtwork(fileOpened: Boolean): Boolean = fileOpened
+
     /** Lower-case hex SHA-256 of [parts] joined with a separator. */
     fun sha256Hex(vararg parts: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -142,7 +149,6 @@ class ArtworkProvider : ContentProvider() {
     }
 
     private val preferences by lazy { PlaybackPreferences(appContext) }
-    private val metadataReader by lazy { MetadataReader(appContext) }
 
     /**
      * The artwork cache folder, re-created on every call because Android may
@@ -155,6 +161,17 @@ class ArtworkProvider : ContentProvider() {
         } catch (error: SecurityException) {
             null
         }
+    }
+
+    /** Where a song's cover came from, or why there is none. */
+    private sealed interface SourceArt {
+        class Found(val bytes: ByteArray) : SourceArt
+
+        /** The file opened and has no picture, and there is no album art. */
+        data object None : SourceArt
+
+        /** The file could not be opened (card missing, no access). */
+        data object Unreadable : SourceArt
     }
 
     /** What openFile hands back: a cached file, or JPEG bytes sent through a pipe. */
@@ -273,7 +290,8 @@ class ArtworkProvider : ContentProvider() {
         val noArtwork = dir?.let { File(it, "$key.none") }
 
         if (noArtwork == null || !noArtwork.exists()) {
-            val bitmap = sourceArtwork(song)?.let(::decodeScaled)
+            val source = sourceArtwork(song)
+            val bitmap = (source as? SourceArt.Found)?.bytes?.let(::decodeScaled)
 
             if (bitmap != null) {
                 if (cached != null && writeJpeg(bitmap, cached)) {
@@ -281,7 +299,9 @@ class ArtworkProvider : ContentProvider() {
                 }
 
                 jpegBytes(bitmap)?.let { return Served.InMemory(it) }
-            } else {
+            } else if (ArtworkPaths.rememberNoArtwork(fileOpened = source !is SourceArt.Unreadable)) {
+                // Remembered only when the file opened and really has no art.
+                // An unreadable file gets a tile now and is tried again later.
                 noArtwork?.createQuietly()
             }
         }
@@ -350,21 +370,40 @@ class ArtworkProvider : ContentProvider() {
     }
 
     /** Embedded picture first, then the MediaStore album art URI. */
-    private fun sourceArtwork(song: SongEntity): ByteArray? {
-        metadataReader.readEmbeddedArtwork(Uri.parse(song.uri))
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { return it }
+    private fun sourceArtwork(song: SongEntity): SourceArt {
+        // Opened directly (not via MetadataReader) to tell "this file has no
+        // picture" apart from "this file could not be opened".
+        val retriever = MediaMetadataRetriever()
 
-        val artworkUri = song.artworkUri?.takeIf { it.isNotBlank() } ?: return null
+        val embedded = try {
+            retriever.setDataSource(appContext, Uri.parse(song.uri))
+            retriever.embeddedPicture
+        } catch (error: Exception) {
+            // SD card missing, access revoked, file renamed or unreadable.
+            Log.w(TAG, "Song file could not be opened for artwork.", error)
+            return SourceArt.Unreadable
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
+        }
+
+        embedded?.takeIf { it.isNotEmpty() }?.let { return SourceArt.Found(it) }
+
+        val artworkUri = song.artworkUri?.takeIf { it.isNotBlank() }
+            ?: return SourceArt.None
 
         return try {
             appContext.contentResolver.openInputStream(Uri.parse(artworkUri))?.use { input ->
                 val bytes = input.readNBytesCompat(MAX_SOURCE_BYTES + 1)
                 bytes.takeIf { it.isNotEmpty() && it.size <= MAX_SOURCE_BYTES }
-            }
+            }?.let { SourceArt.Found(it) } ?: SourceArt.None
         } catch (error: Exception) {
+            // The song file itself was readable; MediaStore usually reports
+            // an album without art this way.
             Log.w(TAG, "Album art could not be read.", error)
-            null
+            SourceArt.None
         }
     }
 
