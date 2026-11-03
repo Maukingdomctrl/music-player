@@ -149,6 +149,28 @@ interface LibraryDao {
     @Query("SELECT playlistId FROM folder_playlists")
     suspend fun getFolderLinkedPlaylistIds(): List<Long>
 
+    @Query(
+        """
+        SELECT playlistId FROM folder_playlists
+        WHERE lastSyncedAtMs IS NOT NULL
+        ORDER BY lastSyncedAtMs DESC, playlistId DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getMostRecentlySyncedFolderPlaylistId(): Long?
+
+    @Query(
+        """
+        SELECT playlist_songs.playlistId FROM playlist_songs
+        INNER JOIN folder_playlists
+            ON folder_playlists.playlistId = playlist_songs.playlistId
+        WHERE playlist_songs.songId = :songId
+        ORDER BY playlist_songs.playlistId ASC
+        LIMIT 1
+        """
+    )
+    suspend fun getFirstFolderPlaylistIdContaining(songId: String): Long?
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFolderLink(link: FolderPlaylistEntity)
 

@@ -22,6 +22,7 @@ import androidx.media3.session.MediaLibraryService.LibraryParams
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
@@ -291,8 +292,29 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
 
-            if (mediaItems.any { it.hasSearchQuery() }) {
-                return Futures.immediateFailedFuture(searchNotSupported())
+            val searchQuery = mediaItems.firstNotNullOfOrNull { it.requestMetadata.searchQuery }
+
+            if (searchQuery != null) {
+                // Blank voice query ("play MyCar Music"): resume the current queue.
+                if (VoiceSearch.normalize(searchQuery).isEmpty() && player.mediaItemCount > 0) {
+                    val current = List(player.mediaItemCount) { player.getMediaItemAt(it) }
+
+                    return Futures.immediateFuture(
+                        MediaSession.MediaItemsWithStartPosition(
+                            current,
+                            player.currentMediaItemIndex,
+                            player.currentPosition
+                        )
+                    )
+                }
+
+                return searchFuture(mediaSession, controller, searchQuery) { queue ->
+                    MediaSession.MediaItemsWithStartPosition(
+                        queue.items,
+                        queue.startIndex,
+                        C.TIME_UNSET
+                    )
+                }
             }
 
             val requested = mediaItems.toList()
@@ -321,8 +343,13 @@ class PlaybackService : MediaLibraryService() {
                 return Futures.immediateFuture(mediaItems)
             }
 
-            if (mediaItems.any { it.hasSearchQuery() }) {
-                return Futures.immediateFailedFuture(searchNotSupported())
+            val searchQuery = mediaItems.firstNotNullOfOrNull { it.requestMetadata.searchQuery }
+
+            if (searchQuery != null) {
+                // Adding never "resumes"; a blank query adds the fallback list.
+                return searchFuture(mediaSession, controller, searchQuery) { queue ->
+                    queue.items.toMutableList()
+                }
             }
 
             val requested = mediaItems.toList()
@@ -335,6 +362,50 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 resolved.toMutableList()
+            }
+        }
+
+        override fun onSearch(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<Void>> {
+            val future = SettableFuture.create<LibraryResult<Void>>()
+
+            val job = mainScope.launch {
+                try {
+                    val count = withContext(Dispatchers.IO) { searchItems(query).size }
+                    session.notifySearchResultChanged(browser, query, count, params)
+                    future.set(LibraryResult.ofVoid())
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.e(TAG, "Search failed.", error)
+                    future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN))
+                }
+            }
+
+            job.invokeOnCompletion {
+                if (!future.isDone) future.cancel(false)
+            }
+
+            return future
+        }
+
+        override fun onGetSearchResult(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            return libraryFuture(
+                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+            ) {
+                val items = BrowseTree.page(searchItems(query), page, pageSize)
+                LibraryResult.ofItemList(ImmutableList.copyOf(items), params)
             }
         }
     }
@@ -681,9 +752,158 @@ class PlaybackService : MediaLibraryService() {
         return requestMetadata.searchQuery != null
     }
 
-    /** Media3 reports UnsupportedOperationException as RESULT_ERROR_NOT_SUPPORTED. */
-    private fun searchNotSupported(): Exception {
-        return UnsupportedOperationException("Voice search is not supported yet.")
+    // Voice and on-screen search
+
+    /**
+     * Resolves a voice query on IO and builds the result on the main thread.
+     * With no match, the controller is sent ERROR_BAD_VALUE and the future
+     * fails, so the current queue is never replaced.
+     */
+    private fun <T> searchFuture(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        query: String,
+        build: (ResolvedQueue) -> T
+    ): ListenableFuture<T> {
+        val future = SettableFuture.create<T>()
+
+        val job = mainScope.launch {
+            try {
+                val queue = withContext(Dispatchers.IO) { resolveSearch(query) }
+
+                if (queue == null) {
+                    reportNoMatch(session, controller, query)
+                    future.setException(IllegalArgumentException(noMatchMessage(query)))
+                } else {
+                    future.set(build(queue))
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Voice search failed.", error)
+                future.setException(error)
+            }
+        }
+
+        job.invokeOnCompletion {
+            if (!future.isDone) future.cancel(false)
+        }
+
+        return future
+    }
+
+    /**
+     * Runs on Dispatchers.IO. A blank query plays the most recently synced
+     * folder playlist, else all songs shuffled. Returns null for no match.
+     */
+    private suspend fun resolveSearch(query: String): ResolvedQueue? {
+        val songs = repository.getAllSongs()
+
+        val match = VoiceSearch.match(
+            query = query,
+            playlists = repository.getAllPlaylists(),
+            folderLinkedIds = repository.getFolderLinkedPlaylistIds().toSet(),
+            songs = songs
+        )
+
+        val queueSongs: List<SongEntity> = when (match) {
+            VoiceMatch.BlankQuery -> {
+                val recentFolderSongs = repository.getMostRecentlySyncedFolderPlaylistId()
+                    ?.let { repository.getPlaylistSongs(it) }
+                    .orEmpty()
+
+                recentFolderSongs.ifEmpty { songs.shuffled() }
+            }
+
+            VoiceMatch.NoMatch -> emptyList()
+
+            is VoiceMatch.Playlist -> repository.getPlaylistSongs(match.playlistId)
+
+            is VoiceMatch.Song -> {
+                val song = songs.firstOrNull { it.id == match.songId }
+
+                if (song == null) {
+                    emptyList()
+                } else {
+                    // The song, then the rest of its first folder playlist.
+                    val rest = repository.getFirstFolderPlaylistIdContaining(song.id)
+                        ?.let { repository.getPlaylistSongs(it) }
+                        .orEmpty()
+                        .filter { it.id != song.id }
+
+                    listOf(song) + rest
+                }
+            }
+
+            is VoiceMatch.Artist -> songsInOrder(songs, match.songIds)
+            is VoiceMatch.Album -> songsInOrder(songs, match.songIds)
+        }
+
+        if (queueSongs.isEmpty()) return null
+
+        return ResolvedQueue(
+            items = queueSongs.map { MediaItemMapper.fromSong(it) },
+            startIndex = 0,
+            startMoved = false
+        )
+    }
+
+    private fun songsInOrder(songs: List<SongEntity>, ids: List<String>): List<SongEntity> {
+        val byId = songs.associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /** Runs on Dispatchers.IO. Playlists, then songs, at most 50. */
+    private suspend fun searchItems(query: String): List<MediaItem> {
+        val results = VoiceSearch.searchResults(
+            query = query,
+            playlists = repository.getAllPlaylists(),
+            folderLinkedIds = repository.getFolderLinkedPlaylistIds().toSet(),
+            songs = repository.getAllSongs()
+        )
+
+        return results.playlists.map { playlist ->
+            nodeItem(
+                id = BrowseId.Playlist(playlist.id),
+                title = playlist.name,
+                mediaType = MediaMetadata.MEDIA_TYPE_PLAYLIST
+            )
+        } + results.songs.map { song ->
+            songItem(BrowseId.LibrarySong(song.id), song)
+        }
+    }
+
+    /**
+     * Sends ERROR_BAD_VALUE to the requesting controller. For legacy
+     * controllers (Android Auto, Assistant) it is also sent to the media
+     * notification controller, which Media3 maps to the platform session's
+     * error state that those clients read.
+     */
+    private fun reportNoMatch(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        query: String
+    ) {
+        val error = SessionError(SessionError.ERROR_BAD_VALUE, noMatchMessage(query))
+
+        try {
+            session.sendError(controller, error)
+
+            if (controller.controllerVersion ==
+                MediaSession.ControllerInfo.LEGACY_CONTROLLER_VERSION
+            ) {
+                session.mediaNotificationControllerInfo
+                    ?.takeIf { it != controller }
+                    ?.let { session.sendError(it, error) }
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not report the search error.", error)
+        }
+    }
+
+    private fun noMatchMessage(query: String): String {
+        val shown = query.trim().take(80)
+        return "Couldn't find \"$shown\" in MyCar Music."
     }
 
     /**

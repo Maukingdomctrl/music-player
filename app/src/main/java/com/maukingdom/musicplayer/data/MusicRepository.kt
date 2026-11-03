@@ -83,6 +83,15 @@ class MusicRepository(
         return dao.getFolderLinkedPlaylistIds()
     }
 
+    suspend fun getMostRecentlySyncedFolderPlaylistId(): Long? {
+        return dao.getMostRecentlySyncedFolderPlaylistId()
+    }
+
+    /** The lowest-ID folder-linked playlist that contains [songId], if any. */
+    suspend fun getFirstFolderPlaylistIdContaining(songId: String): Long? {
+        return dao.getFirstFolderPlaylistIdContaining(songId)
+    }
+
     /**
      * Inserts or refreshes imported songs without deleting existing playlist
      * entries. User-corrected descriptive metadata is preserved on re-import.
