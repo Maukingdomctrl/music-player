@@ -31,6 +31,15 @@ interface LibraryDao {
     @Query("SELECT * FROM songs WHERE id = :songId LIMIT 1")
     suspend fun getSong(songId: String): SongEntity?
 
+    @Query(
+        """
+        SELECT * FROM songs
+        ORDER BY dateAddedMs DESC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getRecentSongs(limit: Int): List<SongEntity>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSong(song: SongEntity): Long
 
@@ -52,6 +61,14 @@ interface LibraryDao {
 
     @Query("SELECT * FROM playlists WHERE id = :playlistId LIMIT 1")
     suspend fun getPlaylist(playlistId: Long): PlaylistEntity?
+
+    @Query(
+        """
+        SELECT * FROM playlists
+        ORDER BY name COLLATE NOCASE ASC, id ASC
+        """
+    )
+    suspend fun getAllPlaylists(): List<PlaylistEntity>
 
     @Insert
     suspend fun insertPlaylist(playlist: PlaylistEntity): Long
@@ -128,6 +145,9 @@ interface LibraryDao {
 
     @Query("SELECT playlistId FROM folder_playlists")
     fun observeFolderLinkedPlaylistIds(): Flow<List<Long>>
+
+    @Query("SELECT playlistId FROM folder_playlists")
+    suspend fun getFolderLinkedPlaylistIds(): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFolderLink(link: FolderPlaylistEntity)

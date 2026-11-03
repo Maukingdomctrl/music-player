@@ -65,6 +65,24 @@ class MusicRepository(
         return dao.observeFolderLinkedPlaylistIds()
     }
 
+    // Read-only queries for media browsers (Android Auto).
+
+    suspend fun getRecentSongs(limit: Int): List<SongEntity> {
+        return dao.getRecentSongs(limit)
+    }
+
+    suspend fun getPlaylist(playlistId: Long): PlaylistEntity? {
+        return dao.getPlaylist(playlistId)
+    }
+
+    suspend fun getAllPlaylists(): List<PlaylistEntity> {
+        return dao.getAllPlaylists()
+    }
+
+    suspend fun getFolderLinkedPlaylistIds(): List<Long> {
+        return dao.getFolderLinkedPlaylistIds()
+    }
+
     /**
      * Inserts or refreshes imported songs without deleting existing playlist
      * entries. User-corrected descriptive metadata is preserved on re-import.

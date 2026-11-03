@@ -9,15 +9,22 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.google.common.collect.ImmutableList
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import com.maukingdom.musicplayer.MainActivity
@@ -46,15 +53,23 @@ import kotlinx.coroutines.withContext
 /**
  * Owns playback independently of the activity lifecycle.
  *
- * ExoPlayer and MediaSession are accessed on the main thread. Playback
+ * ExoPlayer and the session are accessed on the main thread. Playback
  * snapshots are written sequentially by a separate IO coroutine.
+ *
+ * The session is a MediaLibrarySession so media browsers such as Android
+ * Auto can browse the library (see [BrowseTree]) and start playback. Items
+ * that already carry a URI, as sent by this app's own UI, are passed through
+ * unchanged; items without one are resolved from the library.
  */
 @OptIn(UnstableApi::class)
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
 
     companion object {
         private const val TAG = "PlaybackService"
         private const val CHECKPOINT_INTERVAL_MS = 5_000L
+
+        private const val NOTHING_RESOLVED =
+            "None of the requested songs are in the library."
 
         /**
          * Send this Media3 custom session command to explicitly clear both
@@ -101,7 +116,7 @@ class PlaybackService : MediaSessionService() {
     private lateinit var preferences: PlaybackPreferences
     private lateinit var repository: MusicRepository
 
-    private var mediaSession: MediaSession? = null
+    private var mediaSession: MediaLibrarySession? = null
     private var restorationJob: Job? = null
 
     private var restorationInProgress = true
@@ -138,7 +153,7 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private val sessionCallback = object : MediaSession.Callback {
+    private val sessionCallback = object : MediaLibrarySession.Callback {
 
         override fun onConnect(
             session: MediaSession,
@@ -149,12 +164,13 @@ class PlaybackService : MediaSessionService() {
 
             /*
              * Continue accepting external media controllers with the default
-             * commands. The destructive custom command is available only to
+             * commands (for a library session these include the browse
+             * commands). The destructive custom command is available only to
              * controllers under this application's UID.
              */
             if (controller.uid == Process.myUid()) {
                 val commands =
-                    MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
                         .buildUpon()
                         .add(clearQueueCommand)
                         .build()
@@ -188,6 +204,138 @@ class PlaybackService : MediaSessionService() {
             }
 
             return clearQueueExplicitly()
+        }
+
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            return Futures.immediateFuture(
+                LibraryResult.ofItem(nodeItem(BrowseId.Root), params)
+            )
+        }
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            val parent = BrowseTree.decode(parentId) as? BrowseId.Node
+                ?: return Futures.immediateFuture(
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                )
+
+            return libraryFuture(
+                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+            ) {
+                val children = loadChildren(parent, page, pageSize)
+
+                if (children == null) {
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                } else {
+                    LibraryResult.ofItemList(ImmutableList.copyOf(children), params)
+                }
+            }
+        }
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val id = BrowseTree.decode(mediaId)
+                ?: return Futures.immediateFuture(
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                )
+
+            return libraryFuture(
+                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+            ) {
+                val item = loadItem(id)
+
+                if (item == null) {
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                } else {
+                    LibraryResult.ofItem(item, null)
+                }
+            }
+        }
+
+        override fun onSetMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            /*
+             * This app's UI sends complete items with URIs. Passing them
+             * through unchanged keeps the existing behaviour, including any
+             * embedded artwork already attached to the selected item.
+             * URIs from any other controller are never trusted: those items
+             * are resolved from the library by media ID instead.
+             */
+            val trustUris = controller.uid == Process.myUid()
+
+            if (trustUris && mediaItems.all { it.isReadyToPlay() }) {
+                return Futures.immediateFuture(
+                    MediaSession.MediaItemsWithStartPosition(
+                        mediaItems,
+                        startIndex,
+                        startPositionMs
+                    )
+                )
+            }
+
+            if (mediaItems.any { it.hasSearchQuery() }) {
+                return Futures.immediateFailedFuture(searchNotSupported())
+            }
+
+            val requested = mediaItems.toList()
+
+            return ioFuture {
+                val queue = resolveQueue(requested, startIndex, trustUris)
+                    ?: throw IllegalArgumentException(NOTHING_RESOLVED)
+
+                MediaSession.MediaItemsWithStartPosition(
+                    queue.items,
+                    queue.startIndex,
+                    if (queue.startMoved) C.TIME_UNSET else startPositionMs
+                )
+            }
+        }
+
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>
+        ): ListenableFuture<MutableList<MediaItem>> {
+            // Same rule as onSetMediaItems: only this app's URIs are trusted.
+            val trustUris = controller.uid == Process.myUid()
+
+            if (trustUris && mediaItems.all { it.isReadyToPlay() }) {
+                return Futures.immediateFuture(mediaItems)
+            }
+
+            if (mediaItems.any { it.hasSearchQuery() }) {
+                return Futures.immediateFailedFuture(searchNotSupported())
+            }
+
+            val requested = mediaItems.toList()
+
+            return ioFuture {
+                val resolved = requested.flatMap { resolveOne(it, trustUris) }
+
+                if (resolved.isEmpty()) {
+                    throw IllegalArgumentException(NOTHING_RESOLVED)
+                }
+
+                resolved.toMutableList()
+            }
         }
     }
 
@@ -247,9 +395,8 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        mediaSession = MediaSession.Builder(this, player)
+        mediaSession = MediaLibrarySession.Builder(this, player, sessionCallback)
             .setSessionActivity(sessionActivity)
-            .setCallback(sessionCallback)
             .build()
 
         restorePlayback()
@@ -269,8 +416,272 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(
         controllerInfo: MediaSession.ControllerInfo
-    ): MediaSession? {
+    ): MediaLibrarySession? {
         return mediaSession
+    }
+
+    // Media browsing (Android Auto and other browsers)
+
+    /**
+     * Runs [block] on Dispatchers.IO and completes the future on the main
+     * thread. The future is cancelled, never left pending, if the service
+     * scope is cancelled first.
+     */
+    private fun <T> ioFuture(block: suspend () -> T): ListenableFuture<T> {
+        val future = SettableFuture.create<T>()
+
+        val job = mainScope.launch {
+            try {
+                future.set(withContext(Dispatchers.IO) { block() })
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                future.setException(error)
+            }
+        }
+
+        job.invokeOnCompletion {
+            if (!future.isDone) future.cancel(false)
+        }
+
+        return future
+    }
+
+    /**
+     * Like [ioFuture], but unexpected errors become [onError]'s result. The
+     * caller supplies it so the LibraryResult type is concrete.
+     */
+    private fun <T> libraryFuture(
+        onError: () -> LibraryResult<T>,
+        block: suspend () -> LibraryResult<T>
+    ): ListenableFuture<LibraryResult<T>> {
+        return ioFuture {
+            try {
+                block()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Could not load browse content.", error)
+                onError()
+            }
+        }
+    }
+
+    /** Runs on Dispatchers.IO. Returns null if [parent] no longer exists. */
+    private suspend fun loadChildren(
+        parent: BrowseId.Node,
+        page: Int,
+        pageSize: Int
+    ): List<MediaItem>? {
+        return when (parent) {
+            BrowseId.Root -> BrowseTree.page(
+                BrowseTree.rootChildren.map { nodeItem(it) },
+                page,
+                pageSize
+            )
+
+            BrowseId.Playlists -> {
+                val linked = repository.getFolderLinkedPlaylistIds().toSet()
+                val ordered = BrowseTree.orderPlaylists(
+                    repository.getAllPlaylists(),
+                    linked
+                )
+
+                BrowseTree.page(ordered, page, pageSize).map { playlist ->
+                    nodeItem(
+                        id = BrowseId.Playlist(playlist.id),
+                        title = playlist.name,
+                        mediaType = MediaMetadata.MEDIA_TYPE_PLAYLIST
+                    )
+                }
+            }
+
+            is BrowseId.Playlist -> {
+                if (repository.getPlaylist(parent.playlistId) == null) {
+                    null
+                } else {
+                    BrowseTree.page(
+                        repository.getPlaylistSongs(parent.playlistId),
+                        page,
+                        pageSize
+                    ).map { song ->
+                        songItem(BrowseId.PlaylistSong(parent.playlistId, song.id), song)
+                    }
+                }
+            }
+
+            BrowseId.Recent -> BrowseTree.page(
+                repository.getRecentSongs(BrowseTree.RECENT_LIMIT),
+                page,
+                pageSize
+            ).map { song -> songItem(BrowseId.RecentSong(song.id), song) }
+
+            BrowseId.Library -> BrowseTree.page(
+                repository.getAllSongs(),
+                page,
+                pageSize
+            ).map { song -> songItem(BrowseId.LibrarySong(song.id), song) }
+        }
+    }
+
+    /** Runs on Dispatchers.IO. Returns null if the node or song is unknown. */
+    private suspend fun loadItem(id: BrowseId): MediaItem? {
+        return when (id) {
+            is BrowseId.Playlist -> repository.getPlaylist(id.playlistId)?.let {
+                nodeItem(id, it.name, MediaMetadata.MEDIA_TYPE_PLAYLIST)
+            }
+
+            is BrowseId.Node -> nodeItem(id)
+
+            is BrowseId.Playable -> repository.getSong(id.songId)?.let { song ->
+                songItem(id, song)
+            }
+        }
+    }
+
+    /**
+     * Runs on Dispatchers.IO. A single context entry queues its whole list,
+     * starting at that song; otherwise each item is resolved on its own.
+     * Unknown songs are skipped. Returns null if nothing could be resolved.
+     *
+     * When [trustUris] is false (any controller other than this app), URIs
+     * sent with the items are ignored and everything is resolved by media ID.
+     */
+    private suspend fun resolveQueue(
+        requested: List<MediaItem>,
+        startIndex: Int,
+        trustUris: Boolean
+    ): ResolvedQueue? {
+        val single = requested.singleOrNull()
+
+        if (single != null && !(trustUris && single.localConfiguration != null)) {
+            val id = BrowseTree.decode(single.mediaId)
+
+            val context = when (id) {
+                is BrowseId.PlaylistSong -> repository.getPlaylistSongs(id.playlistId)
+                is BrowseId.RecentSong -> repository.getRecentSongs(BrowseTree.RECENT_LIMIT)
+                is BrowseId.LibrarySong -> repository.getAllSongs()
+                else -> null
+            }
+
+            if (id is BrowseId.Playable && context != null) {
+                val index = context.indexOfFirst { it.id == id.songId }
+
+                if (index >= 0) {
+                    return ResolvedQueue(
+                        items = context.map { MediaItemMapper.fromSong(it) },
+                        startIndex = index,
+                        startMoved = false
+                    )
+                }
+                // The song is no longer in that list; fall through and
+                // queue just the song if it is still in the library.
+            }
+        }
+
+        val items = mutableListOf<MediaItem>()
+        val originalIndices = mutableListOf<Int>()
+
+        requested.forEachIndexed { index, item ->
+            for (resolved in resolveOne(item, trustUris)) {
+                items += resolved
+                originalIndices += index
+            }
+        }
+
+        if (items.isEmpty()) return null
+
+        if (startIndex == C.INDEX_UNSET) {
+            return ResolvedQueue(items, C.INDEX_UNSET, startMoved = false)
+        }
+
+        val exact = originalIndices.indexOf(startIndex)
+        if (exact >= 0) {
+            return ResolvedQueue(items, exact, startMoved = false)
+        }
+
+        // The requested start item was skipped: start at the next one.
+        val next = originalIndices.indexOfFirst { it > startIndex }
+            .takeIf { it >= 0 }
+            ?: items.lastIndex
+
+        return ResolvedQueue(items, next, startMoved = true)
+    }
+
+    /**
+     * Runs on Dispatchers.IO. Queue items always use the plain song ID.
+     *
+     * An item keeps its own URI only when [trustUris] is true. Otherwise it
+     * is resolved by media ID: a song or ctx: ID gives that song, and a
+     * playlist, "Recently added" or "All songs" node gives its songs.
+     * Unknown IDs, and the root and playlist-list nodes, give nothing.
+     */
+    private suspend fun resolveOne(
+        item: MediaItem,
+        trustUris: Boolean
+    ): List<MediaItem> {
+        if (trustUris && item.isReadyToPlay()) return listOf(item)
+
+        val songs = when (val id = BrowseTree.decode(item.mediaId)) {
+            is BrowseId.Playable -> listOfNotNull(repository.getSong(id.songId))
+            is BrowseId.Playlist -> repository.getPlaylistSongs(id.playlistId)
+            BrowseId.Recent -> repository.getRecentSongs(BrowseTree.RECENT_LIMIT)
+            BrowseId.Library -> repository.getAllSongs()
+            BrowseId.Root, BrowseId.Playlists, null -> emptyList()
+        }
+
+        return songs.map { MediaItemMapper.fromSong(it) }
+    }
+
+    private fun nodeItem(
+        id: BrowseId.Node,
+        title: String = BrowseTree.title(id).orEmpty(),
+        mediaType: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+    ): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setIsBrowsable(true)
+            .setIsPlayable(false)
+            .setMediaType(mediaType)
+            .build()
+
+        return MediaItem.Builder()
+            .setMediaId(BrowseTree.encode(id))
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
+    /** A browse entry; it has no URI and is resolved when played. */
+    private fun songItem(id: BrowseId.Playable, song: SongEntity): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(song.title)
+            .setArtist(song.artist)
+            .setAlbumTitle(song.album)
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
+            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+
+        song.artworkUri
+            ?.takeIf { it.isNotBlank() }
+            ?.let { metadata.setArtworkUri(Uri.parse(it)) }
+
+        return MediaItem.Builder()
+            .setMediaId(BrowseTree.encode(id))
+            .setMediaMetadata(metadata.build())
+            .build()
+    }
+
+    private fun MediaItem.isReadyToPlay(): Boolean {
+        return localConfiguration != null && !hasSearchQuery()
+    }
+
+    private fun MediaItem.hasSearchQuery(): Boolean {
+        return requestMetadata.searchQuery != null
+    }
+
+    /** Media3 reports UnsupportedOperationException as RESULT_ERROR_NOT_SUPPORTED. */
+    private fun searchNotSupported(): Exception {
+        return UnsupportedOperationException("Voice search is not supported yet.")
     }
 
     /**
@@ -650,6 +1061,13 @@ class PlaybackService : MediaSessionService() {
     private data class SnapshotWrite(
         val snapshot: PlaybackSnapshot,
         val result: SettableFuture<SessionResult>? = null
+    )
+
+    private data class ResolvedQueue(
+        val items: List<MediaItem>,
+        val startIndex: Int,
+        /** True when the requested start item was skipped. */
+        val startMoved: Boolean
     )
 
     private data class RecoveryResult(
