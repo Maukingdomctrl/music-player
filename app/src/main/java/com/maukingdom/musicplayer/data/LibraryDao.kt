@@ -150,6 +150,10 @@ interface LibraryDao {
     @Query("SELECT * FROM folder_playlists WHERE playlistId = :playlistId LIMIT 1")
     suspend fun getFolderLink(playlistId: Long): FolderPlaylistEntity?
 
+    /** Read-only: the folder link (and its last sync time) as it changes; null if not linked. */
+    @Query("SELECT * FROM folder_playlists WHERE playlistId = :playlistId LIMIT 1")
+    fun observeFolderLink(playlistId: Long): Flow<FolderPlaylistEntity?>
+
     @Query("SELECT * FROM folder_playlists WHERE treeUri = :treeUri LIMIT 1")
     suspend fun getFolderLinkByTreeUri(treeUri: String): FolderPlaylistEntity?
 

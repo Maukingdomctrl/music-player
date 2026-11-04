@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import com.maukingdom.musicplayer.data.FolderPlaylistEntity
 import com.maukingdom.musicplayer.data.ImportResult
 import com.maukingdom.musicplayer.data.MetadataReader
 import com.maukingdom.musicplayer.data.MusicDatabase
@@ -67,6 +68,15 @@ data class PlaybackUiState(
     val error: String? = null
 )
 
+/**
+ * The selected playlist's songs tagged with the playlist they belong to, so
+ * a screen can tell a list that is still the previous playlist's.
+ */
+data class SelectedPlaylistSongs(
+    val playlistId: Long? = null,
+    val songs: List<SongEntity> = emptyList()
+)
+
 data class LibraryOperationState(
     val loading: Boolean = false,
     val message: String? = null,
@@ -114,19 +124,43 @@ class MusicViewModel(
         mutableSelectedPlaylistId.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val selectedPlaylistSongs: StateFlow<List<SongEntity>> =
+    val selectedPlaylistContent: StateFlow<SelectedPlaylistSongs> =
         mutableSelectedPlaylistId
             .flatMapLatest { playlistId ->
                 if (playlistId == null) {
-                    flowOf(emptyList())
+                    flowOf(SelectedPlaylistSongs())
                 } else {
                     repository.observePlaylistSongs(playlistId)
+                        .map { songs -> SelectedPlaylistSongs(playlistId, songs) }
                 }
             }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = SelectedPlaylistSongs()
+            )
+
+    /** The selected playlist's songs (Classic). Same source as [selectedPlaylistContent]. */
+    val selectedPlaylistSongs: StateFlow<List<SongEntity>> =
+        selectedPlaylistContent
+            .map { it.songs }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = emptyList()
+            )
+
+    /** Read-only: the selected playlist's SD-card folder link, or null. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val selectedFolderLink: StateFlow<FolderPlaylistEntity?> =
+        mutableSelectedPlaylistId
+            .flatMapLatest { playlistId ->
+                if (playlistId == null) flowOf(null) else repository.observeFolderLink(playlistId)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null
             )
 
     private val mutablePlaybackState = MutableStateFlow(PlaybackUiState())
@@ -602,9 +636,12 @@ class MusicViewModel(
         }
 
         // Remember the playlist only when these are exactly its songs.
+        // selectedPlaylistContent is live whenever either layout shows the
+        // selected playlist (Classic collects it through selectedPlaylistSongs).
         val songIds = songsToPlay.map { it.id }
-        val sourcePlaylistId = mutableSelectedPlaylistId.value?.takeIf {
-            selectedPlaylistSongs.value.map { song -> song.id } == songIds
+        val sourcePlaylistId = mutableSelectedPlaylistId.value?.takeIf { selectedId ->
+            val content = selectedPlaylistContent.value
+            content.playlistId == selectedId && content.songs.map { song -> song.id } == songIds
         }
 
         startQueue(songsToPlay, startIndex, sourcePlaylistId)

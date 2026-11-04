@@ -148,7 +148,7 @@ private fun argb(r: Int, g: Int, b: Int): Int =
     (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
 
 /** HSL with h in 0..360, s and l in 0..1. */
-private fun rgbToHsl(argb: Int): Triple<Float, Float, Float> {
+internal fun rgbToHsl(argb: Int): Triple<Float, Float, Float> {
     val r = ((argb shr 16) and 0xFF) / 255f
     val g = ((argb shr 8) and 0xFF) / 255f
     val b = (argb and 0xFF) / 255f
@@ -166,7 +166,7 @@ private fun rgbToHsl(argb: Int): Triple<Float, Float, Float> {
     return Triple(if (h < 0f) h + 360f else h, s.coerceIn(0f, 1f), l)
 }
 
-private fun hslToRgb(h: Float, s: Float, l: Float): Int {
+internal fun hslToRgb(h: Float, s: Float, l: Float): Int {
     val c = (1f - abs(2f * l - 1f)) * s
     val x = c * (1f - abs((h / 60f) % 2f - 1f))
     val m = l - c / 2f

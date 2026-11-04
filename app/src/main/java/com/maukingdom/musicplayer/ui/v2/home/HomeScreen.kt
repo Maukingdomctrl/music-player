@@ -80,14 +80,15 @@ fun HomeHeaderWash(modifier: Modifier = Modifier) {
 
 /**
  * Home tab: collects library data from [musicViewModel] and shows
- * [HomeScreen]. Tiles and folder cards play the playlist for now; they
- * will open the Playlist screen once it exists (UI v2 Step 5).
+ * [HomeScreen]. Tiles and folder cards open the Playlist screen
+ * ([onOpenPlaylist]); recently added songs play directly.
  */
 @Composable
 fun HomeRoute(
     musicViewModel: MusicViewModel,
     onSettings: () -> Unit,
     onOpenLibrary: () -> Unit,
+    onOpenPlaylist: (Long) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
@@ -105,7 +106,7 @@ fun HomeRoute(
         content = content,
         greeting = greeting,
         onSettings = onSettings,
-        onPlayPlaylist = musicViewModel::playPlaylist,
+        onOpenPlaylist = onOpenPlaylist,
         onPlayRecent = { index -> musicViewModel.playSongs(content.recentlyAdded, index) },
         onOpenLibrary = onOpenLibrary,
         contentPadding = contentPadding,
@@ -136,7 +137,7 @@ fun HomeScreen(
     content: HomeContent,
     greeting: String,
     onSettings: () -> Unit,
-    onPlayPlaylist: (Long) -> Unit,
+    onOpenPlaylist: (Long) -> Unit,
     onPlayRecent: (Int) -> Unit,
     onOpenLibrary: () -> Unit,
     contentPadding: PaddingValues,
@@ -163,7 +164,7 @@ fun HomeScreen(
 
         if (content.quickTiles.isNotEmpty()) {
             item(key = "quick", contentType = "quick") {
-                QuickTileGrid(tiles = content.quickTiles, onPlay = onPlayPlaylist)
+                QuickTileGrid(tiles = content.quickTiles, onOpen = onOpenPlaylist)
             }
         }
 
@@ -177,7 +178,7 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(ModernDimens.itemGapLarge)
                 ) {
                     items(content.folders, key = { it.playlistId }) { folder ->
-                        FolderCardView(folder = folder, onPlay = { onPlayPlaylist(folder.playlistId) })
+                        FolderCardView(folder = folder, onOpen = { onOpenPlaylist(folder.playlistId) })
                     }
                 }
             }
@@ -244,7 +245,7 @@ private fun HomeSection(title: String) {
 
 /** Two columns of 56 dp tiles, 8 dp apart. */
 @Composable
-private fun QuickTileGrid(tiles: List<QuickTile>, onPlay: (Long) -> Unit) {
+private fun QuickTileGrid(tiles: List<QuickTile>, onOpen: (Long) -> Unit) {
     Column(
         modifier = Modifier.padding(
             start = ModernDimens.screenPadding,
@@ -258,7 +259,7 @@ private fun QuickTileGrid(tiles: List<QuickTile>, onPlay: (Long) -> Unit) {
                 pair.forEach { tile ->
                     QuickTileView(
                         tile = tile,
-                        onPlay = { onPlay(tile.playlistId) },
+                        onOpen = { onOpen(tile.playlistId) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -273,13 +274,13 @@ private fun QuickTileGrid(tiles: List<QuickTile>, onPlay: (Long) -> Unit) {
 private val QuickTileFill = Color.White.copy(alpha = 0.08f)
 
 @Composable
-private fun QuickTileView(tile: QuickTile, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+private fun QuickTileView(tile: QuickTile, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .heightIn(min = ModernDimens.quickTileHeight)
             .clip(RoundedCornerShape(ModernDimens.coverMedium))
             .background(QuickTileFill)
-            .clickable(role = Role.Button, onClickLabel = "Play", onClick = onPlay),
+            .clickable(role = Role.Button, onClickLabel = "Open", onClick = onOpen),
         verticalAlignment = Alignment.CenterVertically
     ) {
         CoverImage(
@@ -304,14 +305,14 @@ private fun QuickTileView(tile: QuickTile, onPlay: () -> Unit, modifier: Modifie
 }
 
 @Composable
-private fun FolderCardView(folder: FolderCard, onPlay: () -> Unit) {
+private fun FolderCardView(folder: FolderCard, onOpen: () -> Unit) {
     val shape = RoundedCornerShape(ModernDimens.cardCover)
 
     Column(
         modifier = Modifier
             .width(ModernDimens.folderCardCover)
             .clip(shape)
-            .clickable(role = Role.Button, onClickLabel = "Play", onClick = onPlay)
+            .clickable(role = Role.Button, onClickLabel = "Open", onClick = onOpen)
             .padding(bottom = 4.dp)
     ) {
         CoverImage(

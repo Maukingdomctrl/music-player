@@ -87,6 +87,10 @@ class MusicRepository(
         return dao.getFolderLink(playlistId)
     }
 
+    fun observeFolderLink(playlistId: Long): Flow<FolderPlaylistEntity?> {
+        return dao.observeFolderLink(playlistId)
+    }
+
     suspend fun getKnownDocumentIds(playlistId: Long): List<String> {
         return dao.getKnownDocumentIds(playlistId)
     }

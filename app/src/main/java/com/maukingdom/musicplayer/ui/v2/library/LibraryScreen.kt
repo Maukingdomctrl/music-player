@@ -101,8 +101,8 @@ data class LibraryBanner(val text: String, val isError: Boolean)
 
 /**
  * Your Library tab: collects library data from [musicViewModel] and shows
- * [LibraryScreen]. Playlist and folder rows call [onOpenPlaylist] (plays
- * them for now; UI v2 Step 5 opens the Playlist screen instead).
+ * [LibraryScreen]. Playlist and folder rows open the Playlist screen
+ * ([onOpenPlaylist]); songs, artists and albums play directly.
  */
 @Composable
 fun LibraryRoute(
@@ -425,7 +425,7 @@ private fun PlaylistRow(
             .fillMaxWidth()
             .heightIn(min = ModernDimens.listRowHeight)
             .clickable(
-                onClickLabel = if (accessLost) "Re-select folder" else "Play",
+                onClickLabel = if (accessLost) "Re-select folder" else "Open",
                 onClick = if (accessLost) onReselect else onOpen
             )
             .padding(

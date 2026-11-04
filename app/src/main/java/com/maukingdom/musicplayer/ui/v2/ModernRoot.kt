@@ -5,7 +5,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +65,7 @@ import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
 import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
+import com.maukingdom.musicplayer.ui.v2.playlist.PlaylistRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -84,6 +88,8 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
 
     var tabName by rememberSaveable { mutableStateOf(ModernTab.HOME.name) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // The open Playlist screen, over the current tab; survives Settings and rotation.
+    var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
     // Above the Settings branch, so the player is still open after Back.
     val sheet = rememberNowPlayingSheetState()
 
@@ -129,10 +135,21 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                     }
                 } else {
                     BackHandler(enabled = sheet.isOpen) { closeSheet() }
+                    BackHandler(enabled = openPlaylistId != null && !sheet.isOpen) { openPlaylistId = null }
 
                     TabsLayer(
                         tab = tab,
-                        onSelectTab = { tabName = it.name },
+                        // Tapping any tab, the selected one too, closes an open playlist.
+                        onSelectTab = {
+                            openPlaylistId = null
+                            tabName = it.name
+                        },
+                        openPlaylistId = openPlaylistId,
+                        onOpenPlaylist = { id ->
+                            musicViewModel.selectPlaylist(id)
+                            openPlaylistId = id
+                        },
+                        onClosePlaylist = { openPlaylistId = null },
                         onSettings = { showSettings = true },
                         onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
                         onOpenSearch = { tabName = ModernTab.SEARCH.name },
@@ -168,6 +185,9 @@ private fun TabsLayer(
     onSettings: () -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenSearch: () -> Unit,
+    openPlaylistId: Long?,
+    onOpenPlaylist: (Long) -> Unit,
+    onClosePlaylist: () -> Unit,
     hasQueue: Boolean,
     playbackState: State<PlaybackUiState>,
     musicViewModel: MusicViewModel,
@@ -183,19 +203,30 @@ private fun TabsLayer(
             (if (hasQueue) ModernDimens.miniPlayerHeight else 0.dp)
     )
 
+    val playlistVisibility = remember { MutableTransitionState(openPlaylistId != null) }
+    LaunchedEffect(openPlaylistId != null) { playlistVisibility.targetState = openPlaylistId != null }
+    // Once the playlist fully covers the tab, the tab is not drawn and TalkBack skips it.
+    val tabCovered = playlistVisibility.currentState && playlistVisibility.isIdle
+    // Keeps the last playlist on screen while it slides away (plain holder, never observed).
+    val shownPlaylistId = remember { longArrayOf(-1L) }
+    openPlaylistId?.let { shownPlaylistId[0] = it }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .then(if (sheet.isOpen) Modifier.clearAndSetSemantics { } else Modifier)
     ) {
+        val covered = if (tabCovered) Modifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { } else Modifier
+
         // Behind the status bar and the greeting, at the very top.
         if (tab == ModernTab.HOME) {
-            HomeHeaderWash()
+            HomeHeaderWash(modifier = covered)
         }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .then(covered)
                 .windowInsetsPadding(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
                 )
@@ -206,6 +237,7 @@ private fun TabsLayer(
                     musicViewModel = musicViewModel,
                     onSettings = onSettings,
                     onOpenLibrary = onOpenLibrary,
+                    onOpenPlaylist = onOpenPlaylist,
                     contentPadding = contentPadding,
                     modifier = Modifier
                         .weight(1f)
@@ -215,8 +247,7 @@ private fun TabsLayer(
                 ModernTab.LIBRARY -> LibraryRoute(
                     musicViewModel = musicViewModel,
                     onOpenSearch = onOpenSearch,
-                    // Plays for now; UI v2 Step 5 opens the Playlist screen.
-                    onOpenPlaylist = musicViewModel::playPlaylist,
+                    onOpenPlaylist = onOpenPlaylist,
                     contentPadding = contentPadding,
                     modifier = Modifier
                         .weight(1f)
@@ -234,6 +265,26 @@ private fun TabsLayer(
                             .fillMaxWidth()
                     )
                 }
+            }
+        }
+
+        // The Playlist screen: over the tab content, under the mini player and navigation.
+        AnimatedVisibility(
+            visibleState = playlistVisibility,
+            enter = fadeIn(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) +
+                slideInHorizontally(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) { it / 10 },
+            exit = fadeOut(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) +
+                slideOutHorizontally(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) { it / 10 },
+            label = "playlist"
+        ) {
+            if (shownPlaylistId[0] >= 0L) {
+                PlaylistRoute(
+                    playlistId = shownPlaylistId[0],
+                    musicViewModel = musicViewModel,
+                    onBack = onClosePlaylist,
+                    contentPadding = contentPadding,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
 

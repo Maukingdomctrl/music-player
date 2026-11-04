@@ -26,6 +26,8 @@ object ModernMotion {
     const val CROSSFADE_MS = 150
     const val PRESS_MS = 100
     const val TEXT_SWAP_MS = 220
+    const val PLAYLIST_ENTER_MS = 200
+    const val PLAYLIST_EXIT_MS = 150
 
     /** Sheet: no bounce, settles in about 350 ms. */
     const val SHEET_STIFFNESS = Spring.StiffnessMediumLow
