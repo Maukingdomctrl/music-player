@@ -13,23 +13,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -44,9 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maukingdom.musicplayer.ui.MusicPlayerTheme
@@ -61,11 +53,11 @@ import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerBar
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerSideMargin
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerState
 import com.maukingdom.musicplayer.ui.v2.components.ModernTab
-import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
 import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
 import com.maukingdom.musicplayer.ui.v2.playlist.PlaylistRoute
+import com.maukingdom.musicplayer.ui.v2.search.SearchRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -90,6 +82,10 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // The open Playlist screen, over the current tab; survives Settings and rotation.
     var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Search text, kept across tab switches and rotation.
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    // Set by Library's search icon: the Search field takes focus once.
+    var focusSearch by rememberSaveable { mutableStateOf(false) }
     // Above the Settings branch, so the player is still open after Back.
     val sheet = rememberNowPlayingSheetState()
 
@@ -152,7 +148,14 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                         onClosePlaylist = { openPlaylistId = null },
                         onSettings = { showSettings = true },
                         onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
-                        onOpenSearch = { tabName = ModernTab.SEARCH.name },
+                        onOpenSearch = {
+                            focusSearch = true
+                            tabName = ModernTab.SEARCH.name
+                        },
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        focusSearch = focusSearch,
+                        onSearchFocusHandled = { focusSearch = false },
                         hasQueue = hasQueue,
                         playbackState = playbackState,
                         musicViewModel = musicViewModel,
@@ -185,6 +188,10 @@ private fun TabsLayer(
     onSettings: () -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenSearch: () -> Unit,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    focusSearch: Boolean,
+    onSearchFocusHandled: () -> Unit,
     openPlaylistId: Long?,
     onOpenPlaylist: (Long) -> Unit,
     onClosePlaylist: () -> Unit,
@@ -232,7 +239,7 @@ private fun TabsLayer(
                 )
         ) {
             when (tab) {
-                // Home and Library draw their own headers, so no TopBar.
+                // Each tab draws its own header.
                 ModernTab.HOME -> HomeRoute(
                     musicViewModel = musicViewModel,
                     onSettings = onSettings,
@@ -254,17 +261,18 @@ private fun TabsLayer(
                         .fillMaxWidth()
                 )
 
-                ModernTab.SEARCH -> {
-                    TopBar(onSettings = onSettings)
-
-                    TabPlaceholder(
-                        tab = tab,
-                        contentPadding = contentPadding,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    )
-                }
+                ModernTab.SEARCH -> SearchRoute(
+                    musicViewModel = musicViewModel,
+                    query = searchQuery,
+                    onQueryChange = onSearchQueryChange,
+                    focusOnOpen = focusSearch,
+                    onFocusHandled = onSearchFocusHandled,
+                    onOpenPlaylist = onOpenPlaylist,
+                    contentPadding = contentPadding,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
             }
         }
 
@@ -421,66 +429,5 @@ private fun NowPlayingLayer(
             actions = actions,
             modifier = Modifier.fillMaxSize()
         )
-    }
-}
-
-@Composable
-private fun TopBar(onSettings: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(start = ModernDimens.screenPadding, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "MyCar Music",
-            style = Modern.type.screenTitle,
-            color = Modern.colors.textPrimary,
-            modifier = Modifier
-                .weight(1f)
-                .semantics { heading() }
-        )
-
-        V2IconButton(
-            icon = Icons.Outlined.Settings,
-            contentDescription = "Settings",
-            onClick = onSettings
-        )
-    }
-}
-
-/**
- * Empty per-tab content until the next steps fill it. [contentPadding] is
- * what the bottom bars cover; real lists pass it to their contentPadding.
- */
-@Composable
-private fun TabPlaceholder(
-    tab: ModernTab,
-    contentPadding: PaddingValues,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .padding(contentPadding)
-            .padding(ModernDimens.screenPadding),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = tab.label,
-                style = Modern.type.sectionTitle,
-                color = Modern.colors.textPrimary
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Modern layout — coming in the next steps",
-                style = Modern.type.rowSubtitle,
-                color = Modern.colors.textSecondary,
-                textAlign = TextAlign.Center
-            )
-        }
     }
 }
