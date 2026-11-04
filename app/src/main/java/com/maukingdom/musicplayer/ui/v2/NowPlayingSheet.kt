@@ -19,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -114,6 +116,8 @@ fun NowPlayingSheet(
     onChangeSkin: () -> Unit,
     onClearQueue: () -> Unit,
     tintProvider: () -> Color,
+    onAddToPlaylist: (() -> Unit)? = null,
+    onMoveToPlaylist: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
@@ -152,6 +156,8 @@ fun NowPlayingSheet(
                     onClose = onClose,
                     onChangeSkin = onChangeSkin,
                     onClearQueue = onClearQueue,
+                    onAddToPlaylist = onAddToPlaylist,
+                    onMoveToPlaylist = onMoveToPlaylist,
                     modifier = Modifier.draggable(
                         state = dragState,
                         orientation = Orientation.Vertical,
@@ -181,6 +187,8 @@ private fun SheetHeader(
     onClose: () -> Unit,
     onChangeSkin: () -> Unit,
     onClearQueue: () -> Unit,
+    onAddToPlaylist: (() -> Unit)?,
+    onMoveToPlaylist: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     val colors = Modern.colors
@@ -235,6 +243,30 @@ private fun SheetHeader(
                 onDismissRequest = { menuOpen = false },
                 containerColor = colors.surfaceHigh
             ) {
+                if (onAddToPlaylist != null) {
+                    DropdownMenuItem(
+                        text = { Text("Add to playlist…", style = Modern.type.menuItem, color = colors.textPrimary) },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null, tint = colors.textSecondary)
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onAddToPlaylist()
+                        }
+                    )
+                }
+                if (onMoveToPlaylist != null) {
+                    DropdownMenuItem(
+                        text = { Text("Move to another playlist…", style = Modern.type.menuItem, color = colors.textPrimary) },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = null, tint = colors.textSecondary)
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onMoveToPlaylist()
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Change skin", style = Modern.type.menuItem, color = colors.textPrimary) },
                     leadingIcon = {

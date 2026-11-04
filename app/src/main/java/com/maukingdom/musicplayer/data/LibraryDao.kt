@@ -49,6 +49,9 @@ interface LibraryDao {
     @Query("DELETE FROM songs WHERE id = :songId")
     suspend fun deleteSong(songId: String): Int
 
+    @Query("SELECT id FROM songs")
+    suspend fun getAllSongIds(): List<String>
+
     // Playlists
 
     @Query(
@@ -144,6 +147,10 @@ interface LibraryDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlaylistSong(entry: PlaylistSongEntity): Long
+
+    /** Read-only: ids of the playlists that hold [songId]. */
+    @Query("SELECT playlistId FROM playlist_songs WHERE songId = :songId")
+    fun observePlaylistIdsContaining(songId: String): Flow<List<Long>>
 
     @Update
     suspend fun updatePlaylistSong(entry: PlaylistSongEntity): Int

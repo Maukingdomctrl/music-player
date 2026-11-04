@@ -60,6 +60,8 @@ import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
 import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
 import com.maukingdom.musicplayer.ui.v2.playlist.PlaylistRoute
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistPickerHost
 import com.maukingdom.musicplayer.ui.v2.search.SearchRoute
 import com.maukingdom.musicplayer.ui.v2.studio.CoverColourSetting
 import com.maukingdom.musicplayer.ui.v2.studio.StudioPlayer
@@ -145,49 +147,61 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                         )
                     }
                 } else {
-                    BackHandler(enabled = sheet.isOpen) { closeSheet() }
-                    BackHandler(enabled = openPlaylistId != null && !sheet.isOpen) { openPlaylistId = null }
+                    // Snackbars sit just above whatever covers the bottom: the
+                    // mini player and navigation, or the open player's edge.
+                    val bottomInset = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)
+                        .asPaddingValues().calculateBottomPadding()
+                    val snackbarBottom = bottomInset + 8.dp + if (sheet.isOpen) {
+                        0.dp
+                    } else {
+                        ModernDimens.bottomNavHeight + (if (hasQueue) ModernDimens.miniPlayerHeight else 0.dp)
+                    }
 
-                    TabsLayer(
-                        tab = tab,
-                        // Tapping any tab, the selected one too, closes an open playlist.
-                        onSelectTab = {
-                            openPlaylistId = null
-                            tabName = it.name
-                        },
-                        openPlaylistId = openPlaylistId,
-                        onOpenPlaylist = { id ->
-                            musicViewModel.selectPlaylist(id)
-                            openPlaylistId = id
-                        },
-                        onClosePlaylist = { openPlaylistId = null },
-                        onSettings = { showSettings = true },
-                        onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
-                        onOpenSearch = {
-                            focusSearch = true
-                            tabName = ModernTab.SEARCH.name
-                        },
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        focusSearch = focusSearch,
-                        onSearchFocusHandled = { focusSearch = false },
-                        hasQueue = hasQueue,
-                        playbackState = playbackState,
-                        musicViewModel = musicViewModel,
-                        sheet = sheet,
-                        onOpenPlayer = ::openSheet
-                    )
+                    PlaylistPickerHost(musicViewModel = musicViewModel, snackbarBottomPadding = snackbarBottom) {
+                        BackHandler(enabled = sheet.isOpen) { closeSheet() }
+                        BackHandler(enabled = openPlaylistId != null && !sheet.isOpen) { openPlaylistId = null }
 
-                    if (sheet.isVisible) {
-                        NowPlayingLayer(
-                            musicViewModel = musicViewModel,
+                        TabsLayer(
+                            tab = tab,
+                            // Tapping any tab, the selected one too, closes an open playlist.
+                            onSelectTab = {
+                                openPlaylistId = null
+                                tabName = it.name
+                            },
+                            openPlaylistId = openPlaylistId,
+                            onOpenPlaylist = { id ->
+                                musicViewModel.selectPlaylist(id)
+                                openPlaylistId = id
+                            },
+                            onClosePlaylist = { openPlaylistId = null },
+                            onSettings = { showSettings = true },
+                            onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
+                            onOpenSearch = {
+                                focusSearch = true
+                                tabName = ModernTab.SEARCH.name
+                            },
+                            searchQuery = searchQuery,
+                            onSearchQueryChange = { searchQuery = it },
+                            focusSearch = focusSearch,
+                            onSearchFocusHandled = { focusSearch = false },
+                            hasQueue = hasQueue,
                             playbackState = playbackState,
-                            skin = skin,
+                            musicViewModel = musicViewModel,
                             sheet = sheet,
-                            onClose = ::closeSheet,
-                            onSettle = { open -> if (open) openSheet() else closeSheet() },
-                            onOpenSettings = { showSettings = true }
+                            onOpenPlayer = ::openSheet
                         )
+
+                        if (sheet.isVisible) {
+                            NowPlayingLayer(
+                                musicViewModel = musicViewModel,
+                                playbackState = playbackState,
+                                skin = skin,
+                                sheet = sheet,
+                                onClose = ::closeSheet,
+                                onSettle = { open -> if (open) openSheet() else closeSheet() },
+                                onOpenSettings = { showSettings = true }
+                            )
+                        }
                     }
                 }
             }
@@ -431,7 +445,10 @@ private fun NowPlayingLayer(
     val useCoverColour by musicViewModel.useCoverColour.collectAsStateWithLifecycle()
     val songs by musicViewModel.songs.collectAsStateWithLifecycle()
     val actions = rememberModernPlayerActions(musicViewModel, onOpenSkinPicker = onOpenSettings)
+    val queuePlaylistId by musicViewModel.queuePlaylistId.collectAsStateWithLifecycle()
+    val picker = LocalPlaylistPicker.current
     val playback = playbackState.value
+    val songId = playback.currentSongId
 
     // One hue for the whole player: the cover's colour, or the skin's.
     val targetTint = rememberStudioTint(artwork, useCoverColour, Color(studioSkinTint(skin)))
@@ -449,6 +466,10 @@ private fun NowPlayingLayer(
         onSettle = onSettle,
         onChangeSkin = onOpenSettings,
         onClearQueue = actions::clearQueue,
+        onAddToPlaylist = songId?.let { id -> { picker.add(listOf(id)) } },
+        onMoveToPlaylist = songId?.let { id ->
+            queuePlaylistId?.let { from -> { picker.move(from, listOf(id)) } }
+        },
         tintProvider = { tint.value }
     ) {
         StudioPlayer(

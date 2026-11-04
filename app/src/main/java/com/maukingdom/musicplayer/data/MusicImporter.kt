@@ -22,7 +22,9 @@ data class ImportResult(
     val importedCount: Int,
     val failures: List<ImportFailure>,
     /** Songs a phone scan found but left out because the user removed them. */
-    val skippedRemoved: Int = 0
+    val skippedRemoved: Int = 0,
+    /** Library ids of the songs "Select files" imported, in picked order. */
+    val importedSongIds: List<String> = emptyList()
 )
 
 /**
@@ -395,9 +397,12 @@ class MusicImporter(
             )
         }
 
+        val importedIds = imported.map { it.id }.distinct()
+
         ImportResult(
-            importedCount = imported.map { it.id }.distinct().size,
-            failures = failures
+            importedCount = importedIds.size,
+            failures = failures,
+            importedSongIds = importedIds
         )
     }
 

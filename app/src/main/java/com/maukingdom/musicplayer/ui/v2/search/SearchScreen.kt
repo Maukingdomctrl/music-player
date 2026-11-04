@@ -72,6 +72,8 @@ import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.AddToPlaylistMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenuButton
 import com.maukingdom.musicplayer.ui.v2.ModernMotion
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
@@ -461,7 +463,11 @@ private fun LazyListScope.resultSections(
                 rowHeight = SongRowSizes.height,
                 coverSize = SongRowSizes.cover,
                 onClickLabel = "Play"
-            )
+            ) {
+                SongMenuButton(songTitle = song.title) { close ->
+                    AddToPlaylistMenuItem(songId = song.id, close = close)
+                }
+            }
         }
     }
 

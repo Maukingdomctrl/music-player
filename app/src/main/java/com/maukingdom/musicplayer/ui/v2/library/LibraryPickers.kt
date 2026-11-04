@@ -65,7 +65,7 @@ fun rememberLibraryPickers(musicViewModel: MusicViewModel): LibraryPickers {
             if (uris.isEmpty()) {
                 musicViewModel.showError("No audio files were selected.")
             } else {
-                musicViewModel.importDocuments(uris = uris, resultFlags = data?.flags ?: 0)
+                musicViewModel.importDocuments(uris = uris, resultFlags = data?.flags ?: 0, offerPlaylist = true)
             }
         }
     }

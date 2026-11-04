@@ -37,7 +37,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.material.icons.outlined.PlaylistRemove
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
@@ -96,6 +103,13 @@ import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import com.maukingdom.musicplayer.ui.v2.library.rememberLibraryPickers
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionCheck
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionTopBar
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.rememberSongSelection
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionClickLabel
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionInListOrder
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionSemantics
 import com.maukingdom.musicplayer.ui.v2.modernTween
 import kotlinx.coroutines.delay
 
@@ -135,6 +149,12 @@ interface PlaylistActions {
     fun delete()
     fun moveSong(index: Int, delta: Int)
     fun removeSong(songId: String)
+    /** Opens the Add to playlist sheet for [songIds]. */
+    fun addToPlaylist(songIds: List<String>)
+    /** Opens the Move to playlist sheet for [songIds], leaving this playlist. */
+    fun moveToPlaylist(songIds: List<String>)
+    /** Removes several songs at once, with undo. */
+    fun removeSongs(songIds: List<String>)
 }
 
 /**
@@ -183,6 +203,7 @@ fun PlaylistRoute(
     }
 
     val pickers = rememberLibraryPickers(musicViewModel)
+    val playlistPicker = LocalPlaylistPicker.current
     val latestOnBack by rememberUpdatedState(onBack)
     val isFolder = playlistId in folderIds
     val songs = content.songs.takeIf { content.playlistId == playlistId }
@@ -204,7 +225,7 @@ fun PlaylistRoute(
         busy = running != null || libraryOperation.loading
     )
 
-    val actions = remember(musicViewModel, playlistId, pickers) {
+    val actions = remember(musicViewModel, playlistId, pickers, playlistPicker) {
         object : PlaylistActions {
             private fun currentSongs(): List<SongEntity> =
                 musicViewModel.selectedPlaylistContent.value
@@ -254,6 +275,12 @@ fun PlaylistRoute(
             }
 
             override fun removeSong(songId: String) = musicViewModel.removeSongFromPlaylist(playlistId, songId)
+
+            override fun addToPlaylist(songIds: List<String>) = playlistPicker.add(songIds)
+
+            override fun moveToPlaylist(songIds: List<String>) = playlistPicker.move(playlistId, songIds)
+
+            override fun removeSongs(songIds: List<String>) = musicViewModel.removeSongsFromPlaylist(playlistId, songIds)
         }
     }
 
@@ -274,6 +301,15 @@ fun PlaylistScreen(
     var renaming by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var removeSongId by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmRemoveSelected by rememberSaveable { mutableStateOf(false) }
+    val selection = rememberSongSelection()
+
+    // Songs that leave the playlist leave the selection too.
+    val listedIds = remember(ui.songs) { ui.songs?.map { it.id } }
+    LaunchedEffect(listedIds) { listedIds?.let(selection::prune) }
+    BackHandler(enabled = selection.active) { selection.clear() }
+
+    fun selectedInOrder() = selectionInListOrder(listedIds.orEmpty(), selection.selected.orEmpty())
 
     Box(
         modifier = modifier
@@ -327,16 +363,22 @@ fun PlaylistScreen(
                     key = { _, song -> song.id },
                     contentType = { _, _ -> "song" }
                 ) { index, song ->
+                    // A plain Boolean per row: toggling one song lets the others skip.
+                    val selected = selection.selected?.contains(song.id)
                     SongRow(
                         song = song,
                         index = index,
                         lastIndex = songs.lastIndex,
                         nowPlaying = ui.isCurrentQueue && song.id == ui.currentSongId,
-                        onPlay = { actions.playSong(index) },
+                        selected = selected,
+                        onPlay = { if (selection.active) selection.toggle(song.id) else actions.playSong(index) },
+                        onLongPress = { if (selection.active) selection.toggle(song.id) else selection.start(song.id) },
                         onMove = { delta -> actions.moveSong(index, delta) },
                         onRemove = {
                             if (ui.isFolder) removeSongId = song.id else actions.removeSong(song.id)
-                        }
+                        },
+                        onAddToPlaylist = { actions.addToPlaylist(listOf(song.id)) },
+                        onMoveToPlaylist = { actions.moveToPlaylist(listOf(song.id)) }
                     )
                 }
             }
@@ -357,6 +399,68 @@ fun PlaylistScreen(
                     .background(Color.Black.copy(alpha = 0.28f))
             )
         }
+
+        AnimatedVisibility(
+            visible = selection.active,
+            enter = fadeIn(modernTween(ModernMotion.CROSSFADE_MS)),
+            exit = fadeOut(modernTween(ModernMotion.CROSSFADE_MS)),
+            label = "selectionBar"
+        ) {
+            SelectionTopBar(
+                count = selection.count,
+                allSelected = selection.count == listedIds.orEmpty().size,
+                onClose = selection::clear,
+                onSelectAll = { selection.selectAll(listedIds.orEmpty()) },
+                modifier = Modifier
+                    .background(colors.bg)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            ) {
+                V2IconButton(
+                    icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                    contentDescription = "Add to playlist",
+                    onClick = {
+                        actions.addToPlaylist(selectedInOrder())
+                        selection.clear()
+                    }
+                )
+                V2IconButton(
+                    icon = Icons.AutoMirrored.Outlined.DriveFileMove,
+                    contentDescription = "Move to playlist",
+                    onClick = {
+                        actions.moveToPlaylist(selectedInOrder())
+                        selection.clear()
+                    }
+                )
+                V2IconButton(
+                    icon = Icons.Outlined.PlaylistRemove,
+                    contentDescription = "Remove from playlist",
+                    onClick = {
+                        if (ui.isFolder) {
+                            confirmRemoveSelected = true
+                        } else {
+                            actions.removeSongs(selectedInOrder())
+                            selection.clear()
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    if (confirmRemoveSelected) {
+        val count = selection.count
+        ConfirmDialog(
+            title = if (count == 1) "Remove 1 song?" else "Remove $count songs?",
+            text = "They are removed from this playlist and stay removed when the folder syncs again. " +
+                "The files on your SD card are not changed.",
+            confirmLabel = "Remove",
+            onDismiss = { confirmRemoveSelected = false },
+            onConfirm = {
+                confirmRemoveSelected = false
+                actions.removeSongs(selectedInOrder())
+                selection.clear()
+            }
+        )
     }
 
     if (renaming) {
@@ -647,9 +751,14 @@ private fun SongRow(
     index: Int,
     lastIndex: Int,
     nowPlaying: Boolean,
+    /** Null when not selecting. */
+    selected: Boolean?,
     onPlay: () -> Unit,
+    onLongPress: () -> Unit,
     onMove: (Int) -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onMoveToPlaylist: () -> Unit
 ) {
     val colors = Modern.colors
     var open by remember { mutableStateOf(false) }
@@ -659,11 +768,19 @@ private fun SongRow(
         title = song.title,
         subtitle = song.artist,
         onClick = onPlay,
+        modifier = selectionSemantics(selected),
         titleColor = if (nowPlaying) colors.accent else colors.textPrimary,
         rowHeight = SongRowSizes.height,
         coverSize = SongRowSizes.cover,
-        onClickLabel = "Play"
+        onClickLabel = selectionClickLabel(selected, "Play"),
+        onLongClick = onLongPress,
+        onLongClickLabel = if (selected == null) "Select" else null
     ) {
+        if (selected != null) {
+            SelectionCheck(selected = selected)
+            return@ListRow
+        }
+
         if (nowPlaying) {
             Icon(
                 imageVector = Icons.Filled.GraphicEq,
@@ -688,6 +805,14 @@ private fun SongRow(
                 MenuItem("Move down", enabled = index < lastIndex) {
                     open = false
                     onMove(1)
+                }
+                MenuItem("Add to playlist…") {
+                    open = false
+                    onAddToPlaylist()
+                }
+                MenuItem("Move to playlist…") {
+                    open = false
+                    onMoveToPlaylist()
                 }
                 MenuItem("Remove from playlist") {
                     open = false

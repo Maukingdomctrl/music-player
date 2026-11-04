@@ -21,12 +21,18 @@ import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.MusicImporter
 import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaybackPreferences
+import com.maukingdom.musicplayer.data.PlaylistEdit
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.data.SongMetadata
 import com.maukingdom.musicplayer.ui.v2.cover.COVER_CANDIDATES_PER_PLAYLIST
 import com.maukingdom.musicplayer.ui.v2.cover.CoverCandidateRef
 import com.maukingdom.musicplayer.ui.v2.cover.coverCandidates
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.ImportOffer
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistEditKind
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistEditResult
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.importOffer
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.playlistEditMessage
 import com.maukingdom.musicplayer.playback.ArtworkPaths
 import com.maukingdom.musicplayer.playback.MediaItemMapper
 import com.maukingdom.musicplayer.playback.PlaybackService
@@ -34,7 +40,9 @@ import com.maukingdom.musicplayer.playback.PlayerConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -49,6 +57,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -233,6 +242,14 @@ class MusicViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = emptyMap()
             )
+
+    /** Modern only: results of Add / Move / Remove for the snackbar, each delivered once. */
+    private val playlistEditChannel = Channel<PlaylistEditResult>(Channel.BUFFERED)
+    val playlistEditResults: Flow<PlaylistEditResult> = playlistEditChannel.receiveAsFlow()
+
+    /** Modern only: songs a "Select files" import just added, offered for a playlist. */
+    private val mutableImportOffer = MutableStateFlow<ImportOffer?>(null)
+    val importOffer: StateFlow<ImportOffer?> = mutableImportOffer.asStateFlow()
 
     private val mutableEditingSong = MutableStateFlow<SongEntity?>(null)
     val editingSong: StateFlow<SongEntity?> = mutableEditingSong.asStateFlow()
@@ -552,12 +569,21 @@ class MusicViewModel(
         }
     }
 
-    fun importDocuments(uris: List<Uri>, resultFlags: Int) {
+    /**
+     * With [offerPlaylist] (Modern), a successful import is reported through
+     * [importOffer] instead of the info banner, so the songs can be added to
+     * a playlist. Warnings still use the banner.
+     */
+    fun importDocuments(uris: List<Uri>, resultFlags: Int, offerPlaylist: Boolean = false) {
         if (uris.isEmpty()) return
 
-        runImport {
+        runImport(offerPlaylist) {
             importer.importDocuments(uris, resultFlags)
         }
+    }
+
+    fun consumeImportOffer() {
+        mutableImportOffer.value = null
     }
 
     fun importFolder(treeUri: Uri) {
@@ -598,7 +624,7 @@ class MusicViewModel(
         folderController.clear()
     }
 
-    private fun runImport(operation: suspend () -> ImportResult) {
+    private fun runImport(offerPlaylist: Boolean = false, operation: suspend () -> ImportResult) {
         if (
             mutableLibraryOperation.value.loading ||
             folderController.state.value is FolderOperationState.Running
@@ -627,8 +653,11 @@ class MusicViewModel(
                     ""
                 }
 
+                val offer = if (offerPlaylist) importOffer(result.importedSongIds) else null
+                mutableImportOffer.value = offer
+
                 mutableLibraryOperation.value = LibraryOperationState(
-                    message = "Imported ${result.importedCount} item(s).$skipped",
+                    message = if (offer != null) null else "Imported ${result.importedCount} item(s).$skipped",
                     error = warning
                 )
             } catch (error: Exception) {
@@ -895,6 +924,77 @@ class MusicViewModel(
                 "The song is no longer in this playlist."
             }
         }
+    }
+
+    /** Read-only: ids of the playlists that already hold [songId]. */
+    fun observePlaylistIdsContaining(songId: String): Flow<Set<Long>> =
+        repository.observePlaylistIdsContaining(songId).map { it.toSet() }
+
+    /** Modern: appends [songIds] (skipping ones already there) and reports through [playlistEditResults]. */
+    fun addSongsToPlaylist(playlistId: Long, songIds: List<String>) {
+        runPlaylistEdit(PlaylistEditKind.ADD, playlistId) {
+            repository.addSongsToPlaylist(playlistId, songIds)
+        }
+    }
+
+    /** Modern: creates playlist [name] with [songIds]. Does not change the selected playlist. */
+    fun addSongsToNewPlaylist(name: String, songIds: List<String>) {
+        runLibraryAction {
+            val edit = repository.createPlaylistWithSongs(name, songIds)
+            reportPlaylistEdit(PlaylistEditKind.ADD, name.trim(), edit)
+        }
+    }
+
+    /**
+     * Modern: moves [songIds] from [fromPlaylistId] to [toPlaylistId].
+     * Only Room changes; the player's queue (and the song playing) is untouched.
+     */
+    fun moveSongsToPlaylist(fromPlaylistId: Long, toPlaylistId: Long, songIds: List<String>) {
+        runPlaylistEdit(PlaylistEditKind.MOVE, toPlaylistId) {
+            repository.moveSongs(fromPlaylistId, toPlaylistId, songIds)
+        }
+    }
+
+    /** Modern: creates playlist [name] and moves [songIds] into it. Does not change the selected playlist. */
+    fun moveSongsToNewPlaylist(name: String, fromPlaylistId: Long, songIds: List<String>) {
+        runLibraryAction {
+            val edit = repository.moveSongsToNewPlaylist(name, fromPlaylistId, songIds)
+            reportPlaylistEdit(PlaylistEditKind.MOVE, name.trim(), edit)
+        }
+    }
+
+    /** Modern multi-select: removes [songIds] from [playlistId], with undo. */
+    fun removeSongsFromPlaylist(playlistId: Long, songIds: List<String>) {
+        runPlaylistEdit(PlaylistEditKind.REMOVE, playlistId) {
+            repository.removeSongsFromPlaylist(playlistId, songIds)
+        }
+    }
+
+    fun undoPlaylistEdit(edit: PlaylistEdit) {
+        runLibraryAction {
+            repository.undoPlaylistEdit(edit)
+        }
+    }
+
+    private fun runPlaylistEdit(
+        kind: PlaylistEditKind,
+        playlistId: Long,
+        edit: suspend () -> PlaylistEdit
+    ) {
+        runLibraryAction {
+            val result = edit()
+            val name = repository.getPlaylist(playlistId)?.name.orEmpty()
+            reportPlaylistEdit(kind, name, result)
+        }
+    }
+
+    private suspend fun reportPlaylistEdit(kind: PlaylistEditKind, name: String, edit: PlaylistEdit) {
+        playlistEditChannel.send(
+            PlaylistEditResult(
+                message = playlistEditMessage(kind, edit, name),
+                edit = edit.takeIf { it.changedAnything }
+            )
+        )
     }
 
     fun reorderPlaylist(playlistId: Long, orderedSongIds: List<String>) {

@@ -1,5 +1,9 @@
 package com.maukingdom.musicplayer.ui.v2.library
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.Add
@@ -39,6 +44,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -66,6 +72,17 @@ import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.inlineFolderFailure
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
+import com.maukingdom.musicplayer.ui.v2.ModernMotion
+import com.maukingdom.musicplayer.ui.v2.modernTween
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.AddToPlaylistMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionCheck
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionTopBar
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenuButton
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.rememberSongSelection
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionClickLabel
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionInListOrder
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.selectionSemantics
 import com.maukingdom.musicplayer.ui.v2.components.Chip
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
@@ -236,77 +253,127 @@ fun LibraryScreen(
     onDismissBanner: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        LibraryHeader(onOpenSearch = onOpenSearch, onAddMusic = onAddMusic)
+    val picker = LocalPlaylistPicker.current
+    // Multi-select, for the Songs list only.
+    val selection = rememberSongSelection()
+    val listedIds = remember(rows) { (rows as? LibraryRows.Songs)?.songs?.map { it.id } }
+    LaunchedEffect(filter, listedIds) {
+        if (filter != LibraryFilter.SONGS) selection.clear() else listedIds?.let(selection::prune)
+    }
+    BackHandler(enabled = selection.active) { selection.clear() }
 
-        FilterChips(selected = filter, onSelect = onSelectFilter)
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            LibraryHeader(onOpenSearch = onOpenSearch, onAddMusic = onAddMusic)
 
-        SortButton(sort = sort, onClick = onCycleSort)
+            FilterChips(selected = filter, onSelect = onSelectFilter)
 
-        if (progress != null) {
-            ProgressBanner(text = progress)
+            SortButton(sort = sort, onClick = onCycleSort)
+
+            if (progress != null) {
+                ProgressBanner(text = progress)
+            }
+
+            if (banner != null) {
+                MessageBanner(banner = banner, onDismiss = onDismissBanner)
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                // Scrolls behind the mini player and navigation, ending clear of them.
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 16.dp)
+            ) {
+                when {
+                    rows == null -> Unit
+                    rows.isEmpty -> item(key = "empty", contentType = "empty") {
+                        EmptyLibrary(filter = filter, onAddMusic = onAddMusic, onImportFolder = onImportFolder)
+                    }
+                    rows is LibraryRows.Playlists -> playlistRows(
+                        items = rows.items,
+                        queuedPlaylistId = queuedPlaylistId,
+                        accessLostPlaylistId = accessLostPlaylistId,
+                        busy = progress != null,
+                        onOpenPlaylist = onOpenPlaylist,
+                        onSyncFolder = onSyncFolder,
+                        onReselectFolder = onReselectFolder
+                    )
+                    rows is LibraryRows.Songs -> itemsIndexed(
+                        items = rows.songs,
+                        key = { _, song -> "s:${song.id}" },
+                        contentType = { _, _ -> "song" }
+                    ) { index, song ->
+                        val selected = selection.selected?.contains(song.id)
+                        ListRow(
+                            coverUri = songCoverUri(song.id),
+                            title = song.title,
+                            subtitle = song.artist,
+                            onClick = {
+                                if (selection.active) selection.toggle(song.id) else onPlaySongs(rows.songs, index)
+                            },
+                            modifier = selectionSemantics(selected),
+                            rowHeight = SongRowSizes.height,
+                            coverSize = SongRowSizes.cover,
+                            onClickLabel = selectionClickLabel(selected, "Play"),
+                            onLongClick = {
+                                if (selection.active) selection.toggle(song.id) else selection.start(song.id)
+                            },
+                            onLongClickLabel = if (selected == null) "Select" else null
+                        ) {
+                            if (selected != null) {
+                                SelectionCheck(selected = selected)
+                            } else {
+                                SongMenuButton(songTitle = song.title) { close ->
+                                    AddToPlaylistMenuItem(songId = song.id, close = close)
+                                }
+                            }
+                        }
+                    }
+                    rows is LibraryRows.Groups -> items(
+                        items = rows.groups,
+                        key = { group -> (if (rows.albums) "al:" else "ar:") + group.key },
+                        contentType = { "group" }
+                    ) { group ->
+                        ListRow(
+                            coverUri = songCoverUri(group.coverSongId),
+                            title = group.name,
+                            subtitle = if (rows.albums) {
+                                albumMetaText(group.artist ?: UNKNOWN_ARTIST, group.songs.size)
+                            } else {
+                                songCountLabel(group.songs.size)
+                            },
+                            onClick = { onPlaySongs(group.songs, 0) },
+                            titleStyle = Modern.type.playlistTitle,
+                            // Artists are round, albums square: the shape tells them apart.
+                            coverCorner = if (rows.albums) ModernDimens.coverSmall else ModernDimens.listRowCover / 2,
+                            onClickLabel = "Play"
+                        )
+                    }
+                }
+            }
         }
 
-        if (banner != null) {
-            MessageBanner(banner = banner, onDismiss = onDismissBanner)
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            // Scrolls behind the mini player and navigation, ending clear of them.
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 16.dp)
+        AnimatedVisibility(
+            visible = selection.active,
+            enter = fadeIn(modernTween(ModernMotion.CROSSFADE_MS)),
+            exit = fadeOut(modernTween(ModernMotion.CROSSFADE_MS)),
+            label = "selectionBar"
         ) {
-            when {
-                rows == null -> Unit
-                rows.isEmpty -> item(key = "empty", contentType = "empty") {
-                    EmptyLibrary(filter = filter, onAddMusic = onAddMusic, onImportFolder = onImportFolder)
-                }
-                rows is LibraryRows.Playlists -> playlistRows(
-                    items = rows.items,
-                    queuedPlaylistId = queuedPlaylistId,
-                    accessLostPlaylistId = accessLostPlaylistId,
-                    busy = progress != null,
-                    onOpenPlaylist = onOpenPlaylist,
-                    onSyncFolder = onSyncFolder,
-                    onReselectFolder = onReselectFolder
+            SelectionTopBar(
+                count = selection.count,
+                allSelected = selection.count == listedIds.orEmpty().size,
+                onClose = selection::clear,
+                onSelectAll = { selection.selectAll(listedIds.orEmpty()) }
+            ) {
+                V2IconButton(
+                    icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                    contentDescription = "Add to playlist",
+                    onClick = {
+                        picker.add(selectionInListOrder(listedIds.orEmpty(), selection.selected.orEmpty()))
+                        selection.clear()
+                    }
                 )
-                rows is LibraryRows.Songs -> itemsIndexed(
-                    items = rows.songs,
-                    key = { _, song -> "s:${song.id}" },
-                    contentType = { _, _ -> "song" }
-                ) { index, song ->
-                    ListRow(
-                        coverUri = songCoverUri(song.id),
-                        title = song.title,
-                        subtitle = song.artist,
-                        onClick = { onPlaySongs(rows.songs, index) },
-                        rowHeight = SongRowSizes.height,
-                        coverSize = SongRowSizes.cover,
-                        onClickLabel = "Play"
-                    )
-                }
-                rows is LibraryRows.Groups -> items(
-                    items = rows.groups,
-                    key = { group -> (if (rows.albums) "al:" else "ar:") + group.key },
-                    contentType = { "group" }
-                ) { group ->
-                    ListRow(
-                        coverUri = songCoverUri(group.coverSongId),
-                        title = group.name,
-                        subtitle = if (rows.albums) {
-                            albumMetaText(group.artist ?: UNKNOWN_ARTIST, group.songs.size)
-                        } else {
-                            songCountLabel(group.songs.size)
-                        },
-                        onClick = { onPlaySongs(group.songs, 0) },
-                        titleStyle = Modern.type.playlistTitle,
-                        // Artists are round, albums square: the shape tells them apart.
-                        coverCorner = if (rows.albums) ModernDimens.coverSmall else ModernDimens.listRowCover / 2,
-                        onClickLabel = "Play"
-                    )
-                }
             }
         }
     }

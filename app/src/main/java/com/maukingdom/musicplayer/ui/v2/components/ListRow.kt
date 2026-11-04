@@ -1,6 +1,8 @@
 package com.maukingdom.musicplayer.ui.v2.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +42,8 @@ fun ListRow(
     coverSize: Dp = ModernDimens.listRowCover,
     coverCorner: Dp = ModernDimens.coverSmall,
     onClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null
 ) {
     ListRow(
@@ -52,6 +56,8 @@ fun ListRow(
         titleColor = titleColor,
         rowHeight = rowHeight,
         onClickLabel = onClickLabel,
+        onLongClick = onLongClick,
+        onLongClickLabel = onLongClickLabel,
         trailing = trailing
     )
 }
@@ -60,6 +66,7 @@ fun ListRow(
  * [ListRow] with a caller-drawn [cover] (for example a playlist's
  * LivingCover); the row owns the spacing, text and trailing slot.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ListRow(
     cover: @Composable () -> Unit,
@@ -71,13 +78,26 @@ fun ListRow(
     titleColor: Color = Modern.colors.textPrimary,
     rowHeight: Dp = ModernDimens.listRowHeight,
     onClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = rowHeight)
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
+            .then(
+                if (onLongClick == null) {
+                    Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick)
+                } else {
+                    Modifier.combinedClickable(
+                        onClickLabel = onClickLabel,
+                        onLongClickLabel = onLongClickLabel,
+                        onLongClick = onLongClick,
+                        onClick = onClick
+                    )
+                }
+            )
             .padding(horizontal = ModernDimens.screenPadding, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -255,6 +255,152 @@ class MusicRepository(
         return dao.deletePlaylistSong(playlistId, songId) > 0
     }
 
+    /** Read-only: ids of the playlists that already hold [songId]. */
+    fun observePlaylistIdsContaining(songId: String): Flow<List<Long>> {
+        return dao.observePlaylistIdsContaining(songId)
+    }
+
+    /**
+     * Appends [songIds] to [playlistId] in the given order, in one
+     * transaction. Songs already in the playlist are skipped (counted in
+     * [PlaylistEdit.skipped]); songs no longer in the library are ignored.
+     * Adding to a folder playlist is allowed: the song stays there, since
+     * folder syncs only add new folder files.
+     */
+    suspend fun addSongsToPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
+        return database.withTransaction {
+            checkNotNull(dao.getPlaylist(playlistId)) { "Playlist no longer exists." }
+            appendInTransaction(playlistId, songIds)
+        }
+    }
+
+    /**
+     * Creates playlist [name] and appends [songIds], in one transaction.
+     * Does not select the new playlist (Classic's selection is unchanged).
+     */
+    suspend fun createPlaylistWithSongs(name: String, songIds: List<String>): PlaylistEdit {
+        val cleanedName = name.trim()
+        require(cleanedName.isNotEmpty()) { "A playlist name is required." }
+
+        return database.withTransaction {
+            val playlistId = dao.insertPlaylist(PlaylistEntity(name = cleanedName))
+            appendInTransaction(playlistId, songIds).copy(createdPlaylistId = playlistId)
+        }
+    }
+
+    /**
+     * Moves [songIds] from [fromPlaylistId] to [toPlaylistId] in one
+     * transaction: appended to the target (songs already there are skipped)
+     * and removed from the source, with their old indices kept for undo.
+     * A song moved out of a folder playlist stays out after later syncs,
+     * because its folder document is still recorded as known.
+     */
+    suspend fun moveSongs(
+        fromPlaylistId: Long,
+        toPlaylistId: Long,
+        songIds: List<String>
+    ): PlaylistEdit {
+        require(fromPlaylistId != toPlaylistId) { "Choose a different playlist." }
+
+        return database.withTransaction {
+            checkNotNull(dao.getPlaylist(toPlaylistId)) { "Playlist no longer exists." }
+
+            val sourceOrder = dao.getPlaylistEntries(fromPlaylistId).map { it.songId }
+            val removed = planRemoval(sourceOrder, songIds)
+            val movingIds = removed.mapTo(HashSet()) { it.songId }
+
+            // Only songs really in the source move, in the order the caller gave.
+            val ordered = songIds.distinct().filter { it in movingIds }
+            val added = appendInTransaction(toPlaylistId, ordered)
+
+            for (song in removed) {
+                dao.deletePlaylistSong(fromPlaylistId, song.songId)
+            }
+
+            added.copy(removedFrom = fromPlaylistId, removed = removed)
+        }
+    }
+
+    /** Creates playlist [name] and moves [songIds] into it from [fromPlaylistId], in one transaction. */
+    suspend fun moveSongsToNewPlaylist(
+        name: String,
+        fromPlaylistId: Long,
+        songIds: List<String>
+    ): PlaylistEdit {
+        val cleanedName = name.trim()
+        require(cleanedName.isNotEmpty()) { "A playlist name is required." }
+
+        return database.withTransaction {
+            val playlistId = dao.insertPlaylist(PlaylistEntity(name = cleanedName))
+            moveSongs(fromPlaylistId, playlistId, songIds).copy(createdPlaylistId = playlistId)
+        }
+    }
+
+    /** Removes [songIds] from [playlistId] in one transaction, keeping their indices for undo. */
+    suspend fun removeSongsFromPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
+        return database.withTransaction {
+            val order = dao.getPlaylistEntries(playlistId).map { it.songId }
+            val removed = planRemoval(order, songIds)
+
+            for (song in removed) {
+                dao.deletePlaylistSong(playlistId, song.songId)
+            }
+
+            PlaylistEdit(removedFrom = playlistId, removed = removed)
+        }
+    }
+
+    /**
+     * Undoes [edit] in one transaction: takes out the songs it appended,
+     * puts removed songs back at their old indices, and deletes a playlist
+     * it created. Songs or playlists deleted since are skipped.
+     */
+    suspend fun undoPlaylistEdit(edit: PlaylistEdit) {
+        database.withTransaction {
+            val createdId = edit.createdPlaylistId
+            if (createdId != null) {
+                dao.deletePlaylist(createdId)
+            } else if (edit.addedTo != null) {
+                for (songId in edit.addedSongIds) {
+                    dao.deletePlaylistSong(edit.addedTo, songId)
+                }
+            }
+
+            val sourceId = edit.removedFrom
+            if (sourceId != null && edit.removed.isNotEmpty() && dao.getPlaylist(sourceId) != null) {
+                val known = dao.getAllSongIds().toHashSet()
+                val entries = dao.getPlaylistEntries(sourceId)
+                val byId = entries.associateBy { it.songId }
+                val restorable = edit.removed.filter { it.songId in known }
+                val order = restoreOrder(entries.map { it.songId }, restorable)
+
+                order.forEachIndexed { index, songId ->
+                    val existing = byId[songId]
+                    if (existing == null) {
+                        dao.insertPlaylistSong(PlaylistSongEntity(sourceId, songId, index.toLong()))
+                    } else if (existing.position != index.toLong()) {
+                        dao.updatePlaylistSong(existing.copy(position = index.toLong()))
+                    }
+                }
+            }
+        }
+    }
+
+    /** Must be called inside a transaction. */
+    private suspend fun appendInTransaction(playlistId: Long, songIds: List<String>): PlaylistEdit {
+        val plan = planAppend(
+            playlistId = playlistId,
+            existingIds = dao.getPlaylistEntries(playlistId).mapTo(HashSet()) { it.songId },
+            lastPosition = dao.getLastPlaylistPosition(playlistId),
+            songIds = songIds,
+            knownSongIds = dao.getAllSongIds().toHashSet()
+        )
+
+        val added = plan.entries.filter { dao.insertPlaylistSong(it) != -1L }.map { it.songId }
+
+        return PlaylistEdit(addedTo = playlistId, addedSongIds = added, skipped = plan.skipped)
+    }
+
     /**
      * Reorders an existing playlist. The supplied IDs must contain every
      * current playlist song exactly once.
