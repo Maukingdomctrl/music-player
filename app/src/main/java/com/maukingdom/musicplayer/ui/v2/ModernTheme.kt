@@ -68,7 +68,10 @@ data class ModernType(
     val navLabel: TextStyle = style(11, 500),
     val navLabelSelected: TextStyle = style(11, 600),
     val miniTitle: TextStyle = style(13, 600),
-    val miniSubtitle: TextStyle = style(12, 400)
+    val miniSubtitle: TextStyle = style(12, 400),
+    val sheetEyebrow: TextStyle = style(10, 600, letterSpacing = 1.2f),
+    val sheetTitle: TextStyle = style(13, 700),
+    val menuItem: TextStyle = style(15, 500)
 )
 
 private fun style(sizeSp: Int, weight: Int, letterSpacing: Float = 0f) = TextStyle(
@@ -129,7 +132,8 @@ object Modern {
 
 /**
  * Provides the Modern tokens. Use inside MusicPlayerTheme, so the skin's
- * accent is available. Also clamps the font scale with [clampFontScale].
+ * accent is available. Also clamps the font scale with [clampFontScale]
+ * and provides [LocalReduceMotion].
  */
 @Composable
 fun ModernTheme(content: @Composable () -> Unit) {
@@ -141,11 +145,13 @@ fun ModernTheme(content: @Composable () -> Unit) {
     val clamped = remember(density) {
         Density(density = density.density, fontScale = clampFontScale(density.fontScale))
     }
+    val reduceMotion = rememberReduceMotion()
 
     CompositionLocalProvider(
         LocalModernColors provides colors,
         LocalModernType provides type,
         LocalDensity provides clamped,
+        LocalReduceMotion provides reduceMotion,
         content = content
     )
 }
