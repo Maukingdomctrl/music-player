@@ -10,8 +10,18 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.maukingdom.musicplayer.ui.AppLayout
 import com.maukingdom.musicplayer.ui.MusicPlayerScreen
 import com.maukingdom.musicplayer.ui.MusicViewModel
+import com.maukingdom.musicplayer.ui.v2.ModernRoot
+
+private val LoadingBackground = androidx.compose.ui.graphics.Color(0xFF07060C)
 
 class MainActivity : ComponentActivity() {
 
@@ -33,7 +43,20 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MusicPlayerScreen(musicViewModel)
+            // Both layouts share musicViewModel, so switching never touches
+            // playback. Until the saved choice is read, show only the dark
+            // background rather than flashing the wrong layout.
+            val layout by musicViewModel.appLayout.collectAsStateWithLifecycle()
+
+            when (layout) {
+                AppLayout.CLASSIC -> MusicPlayerScreen(musicViewModel)
+                AppLayout.MODERN -> ModernRoot(musicViewModel)
+                null -> Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(LoadingBackground)
+                )
+            }
         }
     }
 

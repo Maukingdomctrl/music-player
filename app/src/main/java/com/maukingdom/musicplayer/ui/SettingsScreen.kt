@@ -27,7 +27,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +41,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 private const val SKIN_FOOTER =
     "The skin changes the app's colours. Your music and playlists are not affected."
@@ -46,14 +50,23 @@ private const val SKIN_FOOTER =
 private const val SAMSUNG_TONE_TIP =
     "Samsung tip: if Dolby Atmos or Adapt Sound is on, it can override bass/treble."
 
+private const val LAYOUT_FOOTER =
+    "Your music, playlists and settings are shared by both layouts."
+
+/**
+ * [layoutViewModel] defaults to the activity's shared MusicViewModel, so the
+ * Classic call site needs no change to show the app layout choice.
+ */
 @Composable
 fun SettingsScreen(
     selectedSkin: PlayerSkin,
     onSelectSkin: (PlayerSkin) -> Unit,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    layoutViewModel: MusicViewModel = viewModel()
 ) {
     val tokens = LocalSkinTokens.current
+    val appLayout by layoutViewModel.appLayout.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -88,6 +101,33 @@ fun SettingsScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = "APP LAYOUT",
+                    color = tokens.secondary,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .semantics { heading() }
+                )
+            }
+
+            items(AppLayout.entries, key = { "layout-${it.id}" }) { layout ->
+                LayoutCard(
+                    layout = layout,
+                    selected = layout == appLayout,
+                    onClick = { layoutViewModel.setAppLayout(layout) }
+                )
+            }
+
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = LAYOUT_FOOTER,
+                    color = tokens.muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Text(
                     text = "PLAYER SKIN",
@@ -179,6 +219,64 @@ private fun SkinCard(
                 )
             }
         }
+    }
+}
+
+/** One app-layout choice; saved as soon as it is tapped. */
+@Composable
+private fun LayoutCard(
+    layout: AppLayout,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val tokens = LocalSkinTokens.current
+    val shape = RoundedCornerShape(20.dp)
+
+    val ringed = if (selected) {
+        Modifier.border(2.dp, tokens.accent, shape)
+    } else {
+        Modifier.border(1.dp, tokens.muted.copy(alpha = 0.3f), shape)
+    }
+
+    Column(
+        modifier = ringed
+            .clip(shape)
+            .background(tokens.panel)
+            .selectable(
+                selected = selected,
+                onClick = onClick,
+                role = Role.RadioButton
+            )
+            .heightIn(min = 72.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = layout.displayName,
+                color = tokens.text,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+
+            if (selected) {
+                Text(
+                    text = "IN USE",
+                    color = tokens.accent,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+        }
+
+        Text(
+            text = layout.description,
+            color = tokens.muted,
+            fontSize = 12.sp,
+            maxLines = 2
+        )
     }
 }
 

@@ -73,7 +73,9 @@ data class AppPreferences(
     val playerSkinId: String? = null,
     /** Bass and treble in whole dB, -6..+6. */
     val bassDb: Int = 0,
-    val trebleDb: Int = 0
+    val trebleDb: Int = 0,
+    /** Stored layout ID ("classic"/"modern"); null means Classic. */
+    val appLayoutId: String? = null
 )
 
 /**
@@ -99,6 +101,7 @@ class PlaybackPreferences(context: Context) {
         val removedSongIds = stringSetPreferencesKey("removed_song_ids")
         val bassDb = intPreferencesKey("tone_bass_db")
         val trebleDb = intPreferencesKey("tone_treble_db")
+        val appLayout = stringPreferencesKey("app_layout")
     }
 
     private val preferences: Flow<Preferences> = dataStore.data.catch { error ->
@@ -145,7 +148,8 @@ class PlaybackPreferences(context: Context) {
             carModeEnabled = values[Keys.carModeEnabled] ?: false,
             playerSkinId = values[Keys.playerSkin],
             bassDb = (values[Keys.bassDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
-            trebleDb = (values[Keys.trebleDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB)
+            trebleDb = (values[Keys.trebleDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
+            appLayoutId = values[Keys.appLayout]
         )
     }
 
@@ -198,6 +202,12 @@ class PlaybackPreferences(context: Context) {
     suspend fun setCarModeEnabled(enabled: Boolean) {
         dataStore.edit { values ->
             values[Keys.carModeEnabled] = enabled
+        }
+    }
+
+    suspend fun setAppLayout(id: String) {
+        dataStore.edit { values ->
+            values[Keys.appLayout] = id
         }
     }
 

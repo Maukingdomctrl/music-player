@@ -192,6 +192,18 @@ class MusicViewModel(
             initialValue = PlayerSkin.NEON_WALKMAN
         )
 
+    /**
+     * Classic or Modern. Null only until the saved choice has been read, so
+     * the activity can wait instead of flashing the wrong layout.
+     */
+    val appLayout: StateFlow<AppLayout?> = preferences.appPreferences
+        .map { appPreferences -> AppLayout.fromId(appPreferences.appLayoutId) as AppLayout? }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null
+        )
+
     /** Bass in whole dB, -6..+6. */
     val bassDb: StateFlow<Int> = preferences.appPreferences
         .map { it.bassDb }
@@ -860,6 +872,16 @@ class MusicViewModel(
                 preferences.setCarModeEnabled(enabled)
             } catch (error: Exception) {
                 showError(error.message ?: "Could not save Car Mode preference.")
+            }
+        }
+    }
+
+    fun setAppLayout(layout: AppLayout) {
+        viewModelScope.launch {
+            try {
+                preferences.setAppLayout(layout.id)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the app layout.")
             }
         }
     }
