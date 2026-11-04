@@ -61,6 +61,7 @@ import com.maukingdom.musicplayer.ui.v2.components.ModernTab
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
 import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
+import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -134,6 +135,7 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                         onSelectTab = { tabName = it.name },
                         onSettings = { showSettings = true },
                         onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
+                        onOpenSearch = { tabName = ModernTab.SEARCH.name },
                         hasQueue = hasQueue,
                         playbackState = playbackState,
                         musicViewModel = musicViewModel,
@@ -165,6 +167,7 @@ private fun TabsLayer(
     onSelectTab: (ModernTab) -> Unit,
     onSettings: () -> Unit,
     onOpenLibrary: () -> Unit,
+    onOpenSearch: () -> Unit,
     hasQueue: Boolean,
     playbackState: State<PlaybackUiState>,
     musicViewModel: MusicViewModel,
@@ -197,28 +200,40 @@ private fun TabsLayer(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
                 )
         ) {
-            if (tab == ModernTab.HOME) {
-                // Home draws its own greeting and gear, so no TopBar.
-                HomeRoute(
+            when (tab) {
+                // Home and Library draw their own headers, so no TopBar.
+                ModernTab.HOME -> HomeRoute(
                     musicViewModel = musicViewModel,
                     onSettings = onSettings,
                     onOpenLibrary = onOpenLibrary,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        // HomeRoute has no contentPadding parameter yet; keep it clear of the bars.
-                        .padding(contentPadding)
-                )
-            } else {
-                TopBar(onSettings = onSettings)
-
-                TabPlaceholder(
-                    tab = tab,
                     contentPadding = contentPadding,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                 )
+
+                ModernTab.LIBRARY -> LibraryRoute(
+                    musicViewModel = musicViewModel,
+                    onOpenSearch = onOpenSearch,
+                    // Plays for now; UI v2 Step 5 opens the Playlist screen.
+                    onOpenPlaylist = musicViewModel::playPlaylist,
+                    contentPadding = contentPadding,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+
+                ModernTab.SEARCH -> {
+                    TopBar(onSettings = onSettings)
+
+                    TabPlaceholder(
+                        tab = tab,
+                        contentPadding = contentPadding,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    )
+                }
             }
         }
 

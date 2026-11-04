@@ -250,6 +250,9 @@ class MusicViewModel(
     private var queueSource: QueueSource? = null
     private val mutableQueuePlaylistId = MutableStateFlow<Long?>(null)
 
+    /** Id of the playlist the queue was started from in this app, or null. Read-only. */
+    val queuePlaylistId: StateFlow<Long?> = mutableQueuePlaylistId.asStateFlow()
+
     /**
      * Name of the playlist the queue was started from in this app, or null
      * (whole library, or a queue set by another controller such as Android

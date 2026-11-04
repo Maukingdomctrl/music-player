@@ -88,6 +88,7 @@ fun HomeRoute(
     musicViewModel: MusicViewModel,
     onSettings: () -> Unit,
     onOpenLibrary: () -> Unit,
+    contentPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
     val playlists by musicViewModel.playlists.collectAsStateWithLifecycle()
@@ -107,6 +108,7 @@ fun HomeRoute(
         onPlayPlaylist = musicViewModel::playPlaylist,
         onPlayRecent = { index -> musicViewModel.playSongs(content.recentlyAdded, index) },
         onOpenLibrary = onOpenLibrary,
+        contentPadding = contentPadding,
         modifier = modifier
     )
 }
@@ -137,11 +139,16 @@ fun HomeScreen(
     onPlayPlaylist: (Long) -> Unit,
     onPlayRecent: (Int) -> Unit,
     onOpenLibrary: () -> Unit,
+    contentPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = ModernDimens.sectionGap)
+        // [contentPadding] is what the mini player and navigation cover; the
+        // list scrolls behind them and its last item ends clear of them.
+        contentPadding = PaddingValues(
+            bottom = contentPadding.calculateBottomPadding() + ModernDimens.sectionGap
+        )
     ) {
         item(key = "header", contentType = "header") {
             HomeHeader(greeting = greeting, onSettings = onSettings)
