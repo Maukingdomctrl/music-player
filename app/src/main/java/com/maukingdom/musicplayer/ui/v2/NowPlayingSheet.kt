@@ -46,7 +46,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.maukingdom.musicplayer.ui.RetroBackground
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import com.maukingdom.musicplayer.ui.v2.studio.drawStudioBackground
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 
 /**
@@ -98,7 +100,7 @@ private val CloseFlingVelocity = 900.dp // per second
 
 /**
  * Full-screen Now Playing over the tabs and navigation, drawn edge to edge
- * on the skin's retro background. Slides with [state]; drag the header down
+ * on the Studio one-hue background ([tintProvider], read while drawing). Slides with [state]; drag the header down
  * (or fling it) to close. [content] is the skin's player; it gets all the
  * space below the header.
  */
@@ -111,9 +113,11 @@ fun NowPlayingSheet(
     onSettle: (open: Boolean) -> Unit,
     onChangeSkin: () -> Unit,
     onClearQueue: () -> Unit,
+    tintProvider: () -> Color,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val background = Modern.colors.bg
     val heightPx = remember { mutableIntStateOf(1) }
     val flingPx = with(LocalDensity.current) { CloseFlingVelocity.toPx() }
 
@@ -132,7 +136,11 @@ fun NowPlayingSheet(
             // Keep touches from reaching the tabs underneath.
             .pointerInput(Unit) { detectTapGestures { } }
     ) {
-        RetroBackground(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawBehind { drawStudioBackground(tintProvider(), background) }
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()

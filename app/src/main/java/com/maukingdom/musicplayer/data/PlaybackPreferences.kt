@@ -75,7 +75,9 @@ data class AppPreferences(
     val bassDb: Int = 0,
     val trebleDb: Int = 0,
     /** Stored layout ID ("classic"/"modern"); null means Classic. */
-    val appLayoutId: String? = null
+    val appLayoutId: String? = null,
+    /** Modern only: tint the Studio player with the cover's colour instead of the skin's. */
+    val useCoverColour: Boolean = true
 )
 
 /**
@@ -102,6 +104,7 @@ class PlaybackPreferences(context: Context) {
         val bassDb = intPreferencesKey("tone_bass_db")
         val trebleDb = intPreferencesKey("tone_treble_db")
         val appLayout = stringPreferencesKey("app_layout")
+        val modernUseCoverColour = booleanPreferencesKey("modern_use_cover_colour")
     }
 
     private val preferences: Flow<Preferences> = dataStore.data.catch { error ->
@@ -149,7 +152,8 @@ class PlaybackPreferences(context: Context) {
             playerSkinId = values[Keys.playerSkin],
             bassDb = (values[Keys.bassDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
             trebleDb = (values[Keys.trebleDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
-            appLayoutId = values[Keys.appLayout]
+            appLayoutId = values[Keys.appLayout],
+            useCoverColour = values[Keys.modernUseCoverColour] ?: true
         )
     }
 
@@ -202,6 +206,12 @@ class PlaybackPreferences(context: Context) {
     suspend fun setCarModeEnabled(enabled: Boolean) {
         dataStore.edit { values ->
             values[Keys.carModeEnabled] = enabled
+        }
+    }
+
+    suspend fun setUseCoverColour(enabled: Boolean) {
+        dataStore.edit { values ->
+            values[Keys.modernUseCoverColour] = enabled
         }
     }
 

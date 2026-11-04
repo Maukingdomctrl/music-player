@@ -63,7 +63,9 @@ fun SettingsScreen(
     onSelectSkin: (PlayerSkin) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    layoutViewModel: MusicViewModel = viewModel()
+    layoutViewModel: MusicViewModel = viewModel(),
+    /** Extra settings shown under the layout choice; only the Modern layout passes any. */
+    layoutOptions: (@Composable () -> Unit)? = null
 ) {
     val tokens = LocalSkinTokens.current
     val appLayout by layoutViewModel.appLayout.collectAsStateWithLifecycle()
@@ -126,6 +128,12 @@ fun SettingsScreen(
                     color = tokens.muted,
                     style = MaterialTheme.typography.bodyMedium
                 )
+            }
+
+            if (layoutOptions != null) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    layoutOptions()
+                }
             }
 
             item(span = { GridItemSpan(maxLineSpan) }) {

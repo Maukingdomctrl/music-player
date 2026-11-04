@@ -2,6 +2,7 @@ package com.maukingdom.musicplayer.ui.v2
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
@@ -46,7 +48,6 @@ import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.PlaybackUiState
 import com.maukingdom.musicplayer.ui.PlayerSkin
 import com.maukingdom.musicplayer.ui.SettingsScreen
-import com.maukingdom.musicplayer.ui.player.SkinPlayer
 import com.maukingdom.musicplayer.ui.player.toPlayerUi
 import com.maukingdom.musicplayer.ui.v2.components.BottomNavBar
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerBar
@@ -60,6 +61,11 @@ import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
 import com.maukingdom.musicplayer.ui.v2.playlist.PlaylistRoute
 import com.maukingdom.musicplayer.ui.v2.search.SearchRoute
+import com.maukingdom.musicplayer.ui.v2.studio.CoverColourSetting
+import com.maukingdom.musicplayer.ui.v2.studio.StudioPlayer
+import com.maukingdom.musicplayer.ui.v2.studio.formatBadge
+import com.maukingdom.musicplayer.ui.v2.studio.rememberStudioTint
+import com.maukingdom.musicplayer.ui.v2.studio.studioSkinTint
 import kotlinx.coroutines.launch
 
 /**
@@ -128,7 +134,14 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                             onSelectSkin = musicViewModel::setPlayerSkin,
                             onBack = { showSettings = false },
                             layoutViewModel = musicViewModel,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            layoutOptions = {
+                                val useCoverColour by musicViewModel.useCoverColour.collectAsStateWithLifecycle()
+                                CoverColourSetting(
+                                    checked = useCoverColour,
+                                    onCheckedChange = musicViewModel::setUseCoverColour
+                                )
+                            }
                         )
                     }
                 } else {
@@ -415,8 +428,18 @@ private fun NowPlayingLayer(
     val bassDb by musicViewModel.bassDb.collectAsStateWithLifecycle()
     val trebleDb by musicViewModel.trebleDb.collectAsStateWithLifecycle()
     val toneAvailable by musicViewModel.toneControlAvailable.collectAsStateWithLifecycle()
+    val useCoverColour by musicViewModel.useCoverColour.collectAsStateWithLifecycle()
+    val songs by musicViewModel.songs.collectAsStateWithLifecycle()
     val actions = rememberModernPlayerActions(musicViewModel, onOpenSkinPicker = onOpenSettings)
     val playback = playbackState.value
+
+    // One hue for the whole player: the cover's colour, or the skin's.
+    val targetTint = rememberStudioTint(artwork, useCoverColour, Color(studioSkinTint(skin)))
+    val tint = animateColorAsState(targetTint, modernTween(ModernMotion.STUDIO_TINT_MS), label = "studioTint")
+    val currentSong = remember(songs, playback.currentSongId) {
+        songs.firstOrNull { it.id == playback.currentSongId }
+    }
+    val badge = remember(currentSong) { currentSong?.let { formatBadge(it.mimeType, it.uri) } }
 
     NowPlayingSheet(
         state = sheet,
@@ -425,10 +448,10 @@ private fun NowPlayingLayer(
         onClose = onClose,
         onSettle = onSettle,
         onChangeSkin = onOpenSettings,
-        onClearQueue = actions::clearQueue
+        onClearQueue = actions::clearQueue,
+        tintProvider = { tint.value }
     ) {
-        SkinPlayer(
-            skin = skin,
+        StudioPlayer(
             ui = playback.toPlayerUi(
                 artwork = artwork,
                 playlistName = playlistName,
@@ -437,6 +460,8 @@ private fun NowPlayingLayer(
                 toneAvailable = toneAvailable != false
             ),
             actions = actions,
+            tint = tint,
+            formatBadge = badge,
             modifier = Modifier.fillMaxSize()
         )
     }

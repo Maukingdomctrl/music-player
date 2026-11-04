@@ -1,6 +1,7 @@
 package com.maukingdom.musicplayer.playback
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.Equalizer
@@ -17,7 +18,10 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
@@ -38,6 +42,9 @@ import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaybackPreferences
 import com.maukingdom.musicplayer.data.PlaybackSnapshot
+import com.maukingdom.musicplayer.playback.visualiser.BandSmoother
+import com.maukingdom.musicplayer.playback.visualiser.SpectrumAudioProcessor
+import com.maukingdom.musicplayer.playback.visualiser.VisualiserBus
 import com.maukingdom.musicplayer.data.SongEntity
 import java.util.ArrayDeque
 import kotlinx.coroutines.CancellationException
@@ -51,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
@@ -125,6 +133,53 @@ class PlaybackService : MediaLibraryService() {
             // After a failure, try the equaliser again once per track change.
             if (equalizer == null && mutableToneControlAvailable.value == false) {
                 attachEqualizer(player.audioSessionId)
+            }
+        }
+    }
+
+    // Beat visualiser: tells the timeline when sound is actually playing.
+    private val visualiserListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            VisualiserBus.timeline.onPlayingChanged(isPlaying, System.nanoTime())
+        }
+    }
+
+    /**
+     * While a Studio player wants bars, about 30 times a second: takes the
+     * analysed frame that is being heard now, smooths it, publishes it.
+     * Paused or stalled, the bars ease down to silence. Nothing runs while
+     * no one wants bars.
+     */
+    private fun startVisualiserPublisher() {
+        mainScope.launch(Dispatchers.Default) {
+            VisualiserBus.wanted.collectLatest { wanted ->
+                if (!wanted) return@collectLatest
+
+                val smoother = BandSmoother()
+                var target: FloatArray? = null
+                var lastTick = System.nanoTime()
+                var lastFrameAt = 0L
+                var publishedSilence = false
+
+                while (isActive) {
+                    delay(VISUALISER_TICK_MS)
+                    val now = System.nanoTime()
+                    val dt = (now - lastTick) / 1e9
+                    lastTick = now
+
+                    VisualiserBus.timeline.take(now)?.let {
+                        target = it
+                        lastFrameAt = now
+                    }
+                    val sounding = VisualiserBus.timeline.isPlaying &&
+                        now - lastFrameAt < VISUALISER_STALL_NANOS
+                    smoother.update(if (sounding) target else null, dt)
+
+                    val silent = smoother.levels.all { it < 0.002f }
+                    if (silent && publishedSilence) continue
+                    publishedSilence = silent
+                    VisualiserBus.publish(smoother.levels.copyOf())
+                }
             }
         }
     }
@@ -510,7 +565,21 @@ class PlaybackService : MediaLibraryService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        player = ExoPlayer.Builder(this)
+        // Same audio sink as Media3's default, plus a pass-through tap for
+        // the Modern beat visualiser (output is byte-for-byte unchanged).
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink = DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                .setAudioProcessors(arrayOf(SpectrumAudioProcessor()))
+                .build()
+        }
+
+        player = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .build()
@@ -521,6 +590,10 @@ class PlaybackService : MediaLibraryService() {
 
         player.addListener(toneListener)
         attachEqualizer(player.audioSessionId)
+
+        player.addListener(visualiserListener)
+        VisualiserBus.timeline.onPlayingChanged(player.isPlaying, System.nanoTime())
+        startVisualiserPublisher()
 
         mainScope.launch {
             preferences.appPreferences
@@ -542,7 +615,7 @@ class PlaybackService : MediaLibraryService() {
         val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .build()
             .apply {
-                setSmallIcon(R.drawable.ic_notification)
+                setSmallIcon(R.drawable.ic_stat_music)
             }
 
         setMediaNotificationProvider(notificationProvider)
@@ -1522,3 +1595,7 @@ class PlaybackService : MediaLibraryService() {
         val missingCount: Int
     )
 }
+
+/** Visualiser publish interval (~30 Hz) and how long without audio counts as a stall. */
+private const val VISUALISER_TICK_MS = 33L
+private const val VISUALISER_STALL_NANOS = 300_000_000L

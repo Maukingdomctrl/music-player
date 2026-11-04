@@ -271,6 +271,15 @@ class MusicViewModel(
             initialValue = null
         )
 
+    /** Modern only: whether the Studio player takes the cover's colour (default on). */
+    val useCoverColour: StateFlow<Boolean> = preferences.appPreferences
+        .map { it.useCoverColour }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = true
+        )
+
     /** Bass in whole dB, -6..+6. */
     val bassDb: StateFlow<Int> = preferences.appPreferences
         .map { it.bassDb }
@@ -420,24 +429,19 @@ class MusicViewModel(
             val uri = Uri.parse(ArtworkPaths.songUri(songId))
             val resolver = appContext.contentResolver
 
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-                ?: return null
-
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= ARTWORK_MAX_PX &&
-                bounds.outHeight / (sample * 2) >= ARTWORK_MAX_PX
-            ) {
-                sample *= 2
-            }
-
-            val decoded = resolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
-                    inSampleSize = sample
-                })
-            } ?: return null
+            val decoded = decodeWithinBounds(
+                open = { resolver.openInputStream(uri) },
+                // Bounds-only: decodeStream returns null here by design; the size is in the options.
+                readSize = { stream ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeStream(stream, null, bounds)
+                    bounds.outWidth to bounds.outHeight
+                },
+                decode = { stream, sample ->
+                    BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                },
+                maxPx = ARTWORK_MAX_PX
+            ) ?: return null
 
             val longest = maxOf(decoded.width, decoded.height)
             val bitmap = if (longest > ARTWORK_MAX_PX) {
@@ -978,6 +982,16 @@ class MusicViewModel(
                 preferences.setCarModeEnabled(enabled)
             } catch (error: Exception) {
                 showError(error.message ?: "Could not save Car Mode preference.")
+            }
+        }
+    }
+
+    fun setUseCoverColour(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                preferences.setUseCoverColour(enabled)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the setting.")
             }
         }
     }
