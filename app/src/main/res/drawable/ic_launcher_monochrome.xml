@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Themed-icon layer (Android 13+): the same ring and note in solid black,
+    no shadow. The launcher tints it with the wallpaper colour.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="5" />
+
+    <group
+        android:pivotX="54"
+        android:pivotY="51"
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:translateY="4">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z" />
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z" />
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z" />
+    </group>
+</vector>

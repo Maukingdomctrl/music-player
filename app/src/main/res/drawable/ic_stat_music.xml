@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification small icon: the app icon's ring and note, white, no
+    gradients. The 66-unit viewport crops the 108 art to its centre, so the
+    ring fills about 20 of the 24 dp (the status-bar live area).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="66"
+    android:viewportHeight="66">
+
+    <group
+        android:translateX="-21"
+        android:translateY="-21">
+
+        <path
+            android:pathData="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="5" />
+
+        <group
+            android:pivotX="54"
+            android:pivotY="51"
+            android:scaleX="0.62"
+            android:scaleY="0.62"
+            android:translateY="4">
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z" />
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z" />
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z" />
+        </group>
+    </group>
+</vector>

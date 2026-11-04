@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    App icon foreground, "Note in a Wheel": a steering-wheel ring around an
+    eighth note, in glossy piano black. Each shape has its own top-to-bottom
+    gradient (#5A5D64 / #16171A at 28 % / #000000), over a soft shadow 1.6
+    lower. Ring outer radius 28.5: well inside the 66 dp safe zone (r 33).
+
+    Shapes (from the 108 x 108 SVG):
+      ring    circle (54,54) r 26, stroke 5
+      head    ellipse (45,71) rx 10 ry 7.5, rotated -22 deg about its centre
+      stem    rect x 51.5 y 30, 4.5 x 41, corners 2.2
+      flag    cubic path, as drawn
+    The note group: pivot (54,51), scale 0.62, then down 4.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shadow: the same shapes, 1.6 lower, black at 25 %. -->
+    <group android:translateY="1.6">
+        <path
+            android:pathData="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z"
+            android:strokeColor="#40000000"
+            android:strokeWidth="5" />
+    </group>
+    <group
+        android:pivotX="54"
+        android:pivotY="51"
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:translateY="5.6">
+        <path
+            android:fillColor="#40000000"
+            android:pathData="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z" />
+        <path
+            android:fillColor="#40000000"
+            android:pathData="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z" />
+        <path
+            android:fillColor="#40000000"
+            android:pathData="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z" />
+    </group>
+
+    <!-- Ring. -->
+    <path
+        android:pathData="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z"
+        android:strokeWidth="5">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="28"
+                android:endX="54"
+                android:endY="80">
+                <item android:offset="0" android:color="#FF5A5D64" />
+                <item android:offset="0.28" android:color="#FF16171A" />
+                <item android:offset="1" android:color="#FF000000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Note. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="51"
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:translateY="4">
+
+        <!-- Head: ellipse rotated -22 deg about (45,71); spans y 63.10..78.90. -->
+        <path android:pathData="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="45"
+                    android:startY="63.1"
+                    android:endX="45"
+                    android:endY="78.9">
+                    <item android:offset="0" android:color="#FF5A5D64" />
+                    <item android:offset="0.28" android:color="#FF16171A" />
+                    <item android:offset="1" android:color="#FF000000" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Stem. -->
+        <path android:pathData="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="53.75"
+                    android:startY="30"
+                    android:endX="53.75"
+                    android:endY="71">
+                    <item android:offset="0" android:color="#FF5A5D64" />
+                    <item android:offset="0.28" android:color="#FF16171A" />
+                    <item android:offset="1" android:color="#FF000000" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Flag. -->
+        <path android:pathData="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="60.9"
+                    android:startY="30"
+                    android:endX="60.9"
+                    android:endY="56">
+                    <item android:offset="0" android:color="#FF5A5D64" />
+                    <item android:offset="0.28" android:color="#FF16171A" />
+                    <item android:offset="1" android:color="#FF000000" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+</vector>
