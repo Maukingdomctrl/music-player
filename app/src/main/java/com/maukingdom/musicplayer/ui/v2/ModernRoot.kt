@@ -53,6 +53,8 @@ import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerBar
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerSideMargin
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerState
 import com.maukingdom.musicplayer.ui.v2.components.ModernTab
+import com.maukingdom.musicplayer.ui.v2.cover.CoversCovered
+import com.maukingdom.musicplayer.ui.v2.cover.ProvideLivingCovers
 import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
 import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
@@ -218,126 +220,134 @@ private fun TabsLayer(
     val shownPlaylistId = remember { longArrayOf(-1L) }
     openPlaylistId?.let { shownPlaylistId[0] = it }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .then(if (sheet.isOpen) Modifier.clearAndSetSemantics { } else Modifier)
-    ) {
-        val covered = if (tabCovered) Modifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { } else Modifier
+    val coverCandidates by musicViewModel.playlistCoverCandidates.collectAsStateWithLifecycle()
 
-        // Behind the status bar and the greeting, at the very top.
-        if (tab == ModernTab.HOME) {
-            HomeHeaderWash(modifier = covered)
-        }
-
-        Column(
+    // One clock for every living cover on screen; stops while Now Playing covers it.
+    ProvideLivingCovers(candidates = coverCandidates, covered = sheet.isOpen) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(covered)
-                .windowInsetsPadding(
-                    WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
-                )
+                .then(if (sheet.isOpen) Modifier.clearAndSetSemantics { } else Modifier)
         ) {
-            when (tab) {
-                // Each tab draws its own header.
-                ModernTab.HOME -> HomeRoute(
-                    musicViewModel = musicViewModel,
-                    onSettings = onSettings,
-                    onOpenLibrary = onOpenLibrary,
-                    onOpenPlaylist = onOpenPlaylist,
-                    contentPadding = contentPadding,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                )
+            val covered = if (tabCovered) Modifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { } else Modifier
 
-                ModernTab.LIBRARY -> LibraryRoute(
-                    musicViewModel = musicViewModel,
-                    onOpenSearch = onOpenSearch,
-                    onOpenPlaylist = onOpenPlaylist,
-                    contentPadding = contentPadding,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                )
-
-                ModernTab.SEARCH -> SearchRoute(
-                    musicViewModel = musicViewModel,
-                    query = searchQuery,
-                    onQueryChange = onSearchQueryChange,
-                    focusOnOpen = focusSearch,
-                    onFocusHandled = onSearchFocusHandled,
-                    onOpenPlaylist = onOpenPlaylist,
-                    contentPadding = contentPadding,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                )
+            // Behind the status bar and the greeting, at the very top.
+            if (tab == ModernTab.HOME) {
+                HomeHeaderWash(modifier = covered)
             }
-        }
 
-        // The Playlist screen: over the tab content, under the mini player and navigation.
-        AnimatedVisibility(
-            visibleState = playlistVisibility,
-            enter = fadeIn(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) +
-                slideInHorizontally(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) { it / 10 },
-            exit = fadeOut(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) +
-                slideOutHorizontally(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) { it / 10 },
-            label = "playlist"
-        ) {
-            if (shownPlaylistId[0] >= 0L) {
-                PlaylistRoute(
-                    playlistId = shownPlaylistId[0],
-                    musicViewModel = musicViewModel,
-                    onBack = onClosePlaylist,
-                    contentPadding = contentPadding,
-                    modifier = Modifier.fillMaxSize()
-                )
+            // The tab's covers hold still while an open playlist covers it.
+            CoversCovered(covered = tabCovered) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(covered)
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                        )
+                ) {
+                    when (tab) {
+                        // Each tab draws its own header.
+                        ModernTab.HOME -> HomeRoute(
+                            musicViewModel = musicViewModel,
+                            onSettings = onSettings,
+                            onOpenLibrary = onOpenLibrary,
+                            onOpenPlaylist = onOpenPlaylist,
+                            contentPadding = contentPadding,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        )
+
+                        ModernTab.LIBRARY -> LibraryRoute(
+                            musicViewModel = musicViewModel,
+                            onOpenSearch = onOpenSearch,
+                            onOpenPlaylist = onOpenPlaylist,
+                            contentPadding = contentPadding,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        )
+
+                        ModernTab.SEARCH -> SearchRoute(
+                            musicViewModel = musicViewModel,
+                            query = searchQuery,
+                            onQueryChange = onSearchQueryChange,
+                            focusOnOpen = focusSearch,
+                            onFocusHandled = onSearchFocusHandled,
+                            onOpenPlaylist = onOpenPlaylist,
+                            contentPadding = contentPadding,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        )
+                    }
+                }
             }
-        }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-        ) {
-            // Grows in when a queue starts and folds away when it is cleared.
+            // The Playlist screen: over the tab content, under the mini player and navigation.
             AnimatedVisibility(
-                visible = hasQueue,
-                enter = expandVertically(modernTween(ModernMotion.COLOR_MS), expandFrom = Alignment.Top) +
-                    fadeIn(modernTween(ModernMotion.COLOR_MS)),
-                exit = shrinkVertically(modernTween(ModernMotion.TEXT_SWAP_MS), shrinkTowards = Alignment.Top) +
-                    fadeOut(modernTween(ModernMotion.TEXT_SWAP_MS)),
-                label = "miniPlayer"
+                visibleState = playlistVisibility,
+                enter = fadeIn(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) +
+                    slideInHorizontally(modernTween(ModernMotion.PLAYLIST_ENTER_MS)) { it / 10 },
+                exit = fadeOut(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) +
+                    slideOutHorizontally(modernTween(ModernMotion.PLAYLIST_EXIT_MS)) { it / 10 },
+                label = "playlist"
             ) {
-                MiniPlayerHost(
-                    playbackState = playbackState,
-                    musicViewModel = musicViewModel,
-                    onOpen = onOpenPlayer,
-                    modifier = Modifier
-                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                        .padding(horizontal = MiniPlayerSideMargin)
-                        .fillMaxWidth()
-                        // Fades out as the sheet rises over it, back in as it closes.
-                        .graphicsLayer { alpha = sheet.offset }
-                )
+                if (shownPlaylistId[0] >= 0L) {
+                    PlaylistRoute(
+                        playlistId = shownPlaylistId[0],
+                        musicViewModel = musicViewModel,
+                        onBack = onClosePlaylist,
+                        contentPadding = contentPadding,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            BottomNavBar(
-                selected = tab,
-                onSelect = onSelectTab,
-                modifier = Modifier.windowInsetsPadding(
-                    WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
-                )
-            )
-
-            // The bar's colour continues under the gesture / 3-button navigation bar.
-            Spacer(
+            Column(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(colors.bg)
-                    .windowInsetsBottomHeight(WindowInsets.safeDrawing)
-            )
+            ) {
+                // Grows in when a queue starts and folds away when it is cleared.
+                AnimatedVisibility(
+                    visible = hasQueue,
+                    enter = expandVertically(modernTween(ModernMotion.COLOR_MS), expandFrom = Alignment.Top) +
+                        fadeIn(modernTween(ModernMotion.COLOR_MS)),
+                    exit = shrinkVertically(modernTween(ModernMotion.TEXT_SWAP_MS), shrinkTowards = Alignment.Top) +
+                        fadeOut(modernTween(ModernMotion.TEXT_SWAP_MS)),
+                    label = "miniPlayer"
+                ) {
+                    MiniPlayerHost(
+                        playbackState = playbackState,
+                        musicViewModel = musicViewModel,
+                        onOpen = onOpenPlayer,
+                        modifier = Modifier
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                            .padding(horizontal = MiniPlayerSideMargin)
+                            .fillMaxWidth()
+                            // Fades out as the sheet rises over it, back in as it closes.
+                            .graphicsLayer { alpha = sheet.offset }
+                    )
+                }
+
+                BottomNavBar(
+                    selected = tab,
+                    onSelect = onSelectTab,
+                    modifier = Modifier.windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                    )
+                )
+
+                // The bar's colour continues under the gesture / 3-button navigation bar.
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.bg)
+                        .windowInsetsBottomHeight(WindowInsets.safeDrawing)
+                )
+            }
         }
     }
 }

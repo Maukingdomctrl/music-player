@@ -13,6 +13,8 @@ import coil.request.SuccessResult
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.averageColor
 import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
+import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
+import com.maukingdom.musicplayer.ui.v2.cover.LocalCoverCandidates
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +41,11 @@ fun rememberPlaylistWash(playlistId: Long, playlistName: String): Color? {
     val context = LocalContext.current
     val colors = Modern.colors
     val bg = colors.bg.toArgb()
-    val key = "$playlistId|$playlistName|${colors.accent.toArgb()}"
+    // The first cover song when there is one: the generated playlist tile
+    // is a flat dark grey and would give a grey wash.
+    val sourceSongId = LocalCoverCandidates.current[playlistId]?.firstOrNull()
+    val sourceUri = sourceSongId?.let(::songCoverUri) ?: playlistCoverUri(playlistId)
+    val key = "$playlistId|$playlistName|${colors.accent.toArgb()}|${sourceSongId.orEmpty()}"
 
     return produceState(initialValue = washCache[key]?.let(::Color), key) {
         // The name is part of the key; wait until the playlist has loaded.
@@ -50,7 +56,7 @@ fun rememberPlaylistWash(playlistId: Long, playlistName: String): Color? {
         }
 
         val request = ImageRequest.Builder(context)
-            .data(playlistCoverUri(playlistId))
+            .data(sourceUri)
             .size(SAMPLE_PX)
             .allowHardware(false)
             .build()

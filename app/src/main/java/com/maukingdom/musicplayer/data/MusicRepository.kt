@@ -107,6 +107,10 @@ class MusicRepository(
         return dao.observePlaylistSongCounts()
     }
 
+    fun observePlaylistCoverRefs(): Flow<List<PlaylistCoverRef>> {
+        return dao.observePlaylistCoverRefs()
+    }
+
     // Read-only queries for media browsers (Android Auto).
 
     suspend fun getRecentSongs(limit: Int): List<SongEntity> {

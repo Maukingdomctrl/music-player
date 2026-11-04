@@ -90,11 +90,10 @@ import com.maukingdom.musicplayer.ui.v2.LocalReduceMotion
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.ModernMotion
-import com.maukingdom.musicplayer.ui.v2.components.CoverImage
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
-import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
+import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import com.maukingdom.musicplayer.ui.v2.library.rememberLibraryPickers
 import com.maukingdom.musicplayer.ui.v2.modernTween
@@ -443,10 +442,12 @@ private fun PlaylistHeader(ui: PlaylistUi, topPadding: Dp, actions: PlaylistActi
             .fillMaxWidth()
             .padding(top = topPadding)
     ) {
-        CoverImage(
-            uri = playlistCoverUri(ui.id),
+        LivingCover(
+            playlistId = ui.id,
+            playlistName = ui.name,
             size = CoverSize,
             corner = ModernDimens.coverMedium,
+            animate = true,
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .shadow(elevation = 18.dp, shape = coverShape, clip = false)

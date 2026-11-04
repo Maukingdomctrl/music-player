@@ -67,11 +67,10 @@ import com.maukingdom.musicplayer.ui.inlineFolderFailure
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.components.Chip
-import com.maukingdom.musicplayer.ui.v2.components.CoverImage
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
-import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
+import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import com.maukingdom.musicplayer.ui.v2.home.songCountLabel
 import kotlinx.coroutines.Dispatchers
@@ -436,7 +435,13 @@ private fun PlaylistRow(
             ),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        CoverImage(uri = playlistCoverUri(item.id), size = ModernDimens.listRowCover, corner = ModernDimens.coverSmall)
+        LivingCover(
+            playlistId = item.id,
+            playlistName = item.name,
+            size = ModernDimens.listRowCover,
+            corner = ModernDimens.coverSmall,
+            animate = false
+        )
 
         Spacer(modifier = Modifier.width(ModernDimens.itemGap))
 

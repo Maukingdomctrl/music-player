@@ -24,6 +24,9 @@ import com.maukingdom.musicplayer.data.PlaybackPreferences
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.data.SongMetadata
+import com.maukingdom.musicplayer.ui.v2.cover.COVER_CANDIDATES_PER_PLAYLIST
+import com.maukingdom.musicplayer.ui.v2.cover.CoverCandidateRef
+import com.maukingdom.musicplayer.ui.v2.cover.coverCandidates
 import com.maukingdom.musicplayer.playback.ArtworkPaths
 import com.maukingdom.musicplayer.playback.MediaItemMapper
 import com.maukingdom.musicplayer.playback.PlaybackService
@@ -44,6 +47,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -205,6 +209,25 @@ class MusicViewModel(
     val playlistSongCounts: StateFlow<Map<Long, Int>> =
         repository.observePlaylistSongCounts()
             .map { counts -> counts.associate { it.playlistId to it.songCount } }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyMap()
+            )
+
+    /**
+     * Read-only: up to [COVER_CANDIDATES_PER_PLAYLIST] song ids per playlist
+     * whose covers Modern's living covers may use (different albums first).
+     */
+    val playlistCoverCandidates: StateFlow<Map<Long, List<String>>> =
+        repository.observePlaylistCoverRefs()
+            .map { refs ->
+                coverCandidates(
+                    refs.map { CoverCandidateRef(it.playlistId, it.songId, it.album) },
+                    COVER_CANDIDATES_PER_PLAYLIST
+                )
+            }
+            .flowOn(Dispatchers.Default)
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),

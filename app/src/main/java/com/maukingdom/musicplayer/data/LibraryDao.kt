@@ -69,6 +69,17 @@ interface LibraryDao {
     )
     fun observePlaylistSongCounts(): Flow<List<PlaylistSongCount>>
 
+    /** Every playlist entry in playlist order, with its album. Read-only. */
+    @Query(
+        """
+        SELECT ps.playlistId AS playlistId, ps.songId AS songId, s.album AS album
+        FROM playlist_songs ps
+        INNER JOIN songs s ON s.id = ps.songId
+        ORDER BY ps.playlistId, ps.position
+        """
+    )
+    fun observePlaylistCoverRefs(): Flow<List<PlaylistCoverRef>>
+
     @Query("SELECT * FROM playlists WHERE id = :playlistId LIMIT 1")
     suspend fun getPlaylist(playlistId: Long): PlaylistEntity?
 

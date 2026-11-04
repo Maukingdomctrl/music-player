@@ -93,6 +93,13 @@ data class PlaylistSongCount(
     val songCount: Int
 )
 
+/** One playlist entry with its song's album; for Modern's living covers. Not a table. */
+data class PlaylistCoverRef(
+    val playlistId: Long,
+    val songId: String,
+    val album: String
+)
+
 /**
  * Links a playlist to a user-selected SAF document tree. At most one playlist
  * may be linked to a given tree URI.

@@ -51,6 +51,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -71,12 +73,12 @@ import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.ModernMotion
-import com.maukingdom.musicplayer.ui.v2.components.CoverImage
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
 import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
+import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.home.songCountLabel
 import com.maukingdom.musicplayer.ui.v2.library.PlaylistItem
 import com.maukingdom.musicplayer.ui.v2.library.SongGroup
@@ -387,7 +389,15 @@ private fun BrowseTileView(tile: BrowseTile, onOpen: () -> Unit, modifier: Modif
     }
     val fill = animateColorAsState(target, modernTween(ModernMotion.COLOR_MS), label = "tileColour")
     val nameStyle = Modern.type.screenTitle.let {
-        remember(it) { it.copy(fontSize = 16.sp, fontWeight = FontWeight(800), letterSpacing = 0.sp) }
+        remember(it) {
+            it.copy(
+                fontSize = 16.sp,
+                fontWeight = FontWeight(800),
+                letterSpacing = 0.sp,
+                // Keeps the name readable where it meets the cover.
+                shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 1f), blurRadius = 6f)
+            )
+        }
     }
     val coverShape = RoundedCornerShape(ModernDimens.coverSmall)
 
@@ -399,20 +409,14 @@ private fun BrowseTileView(tile: BrowseTile, onOpen: () -> Unit, modifier: Modif
             .drawBehind { drawRect(fill.value) }
             .clickable(role = Role.Button, onClickLabel = "Open", onClick = onOpen)
     ) {
-        Text(
-            text = tile.name,
-            style = nameStyle,
-            color = Color.White,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 40.dp)
-        )
-
-        // Peeks from the bottom-right corner, tilted; the tile clips it.
-        CoverImage(
-            uri = playlistCoverUri(tile.playlistId),
+        // Peeks from the bottom-right corner, tilted; the tile clips it. Drawn
+        // first, so the name stays on top where a long name reaches it.
+        LivingCover(
+            playlistId = tile.playlistId,
+            playlistName = tile.name,
             size = TileCover,
             corner = ModernDimens.coverSmall,
+            animate = true,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .offset(x = 14.dp, y = 8.dp)
@@ -422,6 +426,15 @@ private fun BrowseTileView(tile: BrowseTile, onOpen: () -> Unit, modifier: Modif
                     shape = coverShape
                     clip = true
                 }
+        )
+
+        Text(
+            text = tile.name,
+            style = nameStyle,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 40.dp)
         )
     }
 }

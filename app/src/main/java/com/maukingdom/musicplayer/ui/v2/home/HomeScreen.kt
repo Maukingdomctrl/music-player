@@ -47,7 +47,7 @@ import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.components.CoverImage
 import com.maukingdom.musicplayer.ui.v2.components.SectionHeader
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
-import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
+import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import java.util.Calendar
 import kotlinx.coroutines.delay
@@ -283,10 +283,13 @@ private fun QuickTileView(tile: QuickTile, onOpen: () -> Unit, modifier: Modifie
             .clickable(role = Role.Button, onClickLabel = "Open", onClick = onOpen),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        CoverImage(
-            uri = playlistCoverUri(tile.playlistId),
+        // Static: a still picture with the era look; changes only when the songs do.
+        LivingCover(
+            playlistId = tile.playlistId,
+            playlistName = tile.name,
             size = ModernDimens.quickTileHeight,
-            corner = 0.dp
+            corner = 0.dp,
+            animate = false
         )
 
         Spacer(modifier = Modifier.width(10.dp))
@@ -315,10 +318,12 @@ private fun FolderCardView(folder: FolderCard, onOpen: () -> Unit) {
             .clickable(role = Role.Button, onClickLabel = "Open", onClick = onOpen)
             .padding(bottom = 4.dp)
     ) {
-        CoverImage(
-            uri = playlistCoverUri(folder.playlistId),
+        LivingCover(
+            playlistId = folder.playlistId,
+            playlistName = folder.name,
             size = ModernDimens.folderCardCover,
             corner = ModernDimens.cardCover,
+            animate = true,
             modifier = Modifier.shadow(elevation = 10.dp, shape = shape, clip = false)
         )
 
