@@ -76,7 +76,6 @@ import com.maukingdom.musicplayer.ui.v2.ModernMotion
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
 import com.maukingdom.musicplayer.ui.v2.components.SongRowSizes
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
-import com.maukingdom.musicplayer.ui.v2.components.playlistCoverUri
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.home.songCountLabel
@@ -497,7 +496,16 @@ private fun LazyListScope.sectionHeader(title: String) {
 @Composable
 private fun PlaylistResult(item: PlaylistItem, onOpen: () -> Unit) {
     ListRow(
-        coverUri = playlistCoverUri(item.id),
+        // Still, like Library rows: first song picture with the era look.
+        cover = {
+            LivingCover(
+                playlistId = item.id,
+                playlistName = item.name,
+                size = ModernDimens.listRowCover,
+                corner = ModernDimens.coverSmall,
+                animate = false
+            )
+        },
         title = item.name,
         subtitle = playlistMetaText(item.isFolder, item.songCount),
         onClick = onOpen,

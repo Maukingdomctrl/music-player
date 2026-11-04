@@ -42,6 +42,37 @@ fun ListRow(
     onClickLabel: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null
 ) {
+    ListRow(
+        cover = { CoverImage(uri = coverUri, size = coverSize, corner = coverCorner) },
+        title = title,
+        subtitle = subtitle,
+        onClick = onClick,
+        modifier = modifier,
+        titleStyle = titleStyle,
+        titleColor = titleColor,
+        rowHeight = rowHeight,
+        onClickLabel = onClickLabel,
+        trailing = trailing
+    )
+}
+
+/**
+ * [ListRow] with a caller-drawn [cover] (for example a playlist's
+ * LivingCover); the row owns the spacing, text and trailing slot.
+ */
+@Composable
+fun ListRow(
+    cover: @Composable () -> Unit,
+    title: String,
+    subtitle: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    titleStyle: TextStyle = Modern.type.rowTitle,
+    titleColor: Color = Modern.colors.textPrimary,
+    rowHeight: Dp = ModernDimens.listRowHeight,
+    onClickLabel: String? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -50,7 +81,7 @@ fun ListRow(
             .padding(horizontal = ModernDimens.screenPadding, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        CoverImage(uri = coverUri, size = coverSize, corner = coverCorner)
+        cover()
 
         Spacer(modifier = Modifier.width(ModernDimens.itemGap))
 
