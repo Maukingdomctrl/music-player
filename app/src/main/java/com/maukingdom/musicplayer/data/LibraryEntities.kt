@@ -87,6 +87,12 @@ data class SongMetadata(
     val year: Int?
 )
 
+/** Query result (not a table): how many songs a playlist holds. */
+data class PlaylistSongCount(
+    val playlistId: Long,
+    val songCount: Int
+)
+
 /**
  * Links a playlist to a user-selected SAF document tree. At most one playlist
  * may be linked to a given tree URI.

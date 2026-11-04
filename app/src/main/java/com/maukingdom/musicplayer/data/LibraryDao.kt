@@ -59,6 +59,16 @@ interface LibraryDao {
     )
     fun observePlaylists(): Flow<List<PlaylistEntity>>
 
+    /** Song count per playlist; empty playlists are left out. Read-only. */
+    @Query(
+        """
+        SELECT playlistId, COUNT(*) AS songCount
+        FROM playlist_songs
+        GROUP BY playlistId
+        """
+    )
+    fun observePlaylistSongCounts(): Flow<List<PlaylistSongCount>>
+
     @Query("SELECT * FROM playlists WHERE id = :playlistId LIMIT 1")
     suspend fun getPlaylist(playlistId: Long): PlaylistEntity?
 

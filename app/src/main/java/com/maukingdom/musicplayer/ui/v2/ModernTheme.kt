@@ -63,6 +63,7 @@ data class ModernType(
     val playlistTitle: TextStyle = style(15, 600),
     val rowSubtitle: TextStyle = style(13, 400),
     val cardTitle: TextStyle = style(14, 600),
+    val tileTitle: TextStyle = style(13, 700),
     val caption: TextStyle = style(12, 400),
     val chip: TextStyle = style(13, 500),
     val navLabel: TextStyle = style(11, 500),

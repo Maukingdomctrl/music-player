@@ -59,6 +59,8 @@ import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerSideMargin
 import com.maukingdom.musicplayer.ui.v2.components.MiniPlayerState
 import com.maukingdom.musicplayer.ui.v2.components.ModernTab
 import com.maukingdom.musicplayer.ui.v2.components.V2IconButton
+import com.maukingdom.musicplayer.ui.v2.home.HomeHeaderWash
+import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -131,6 +133,7 @@ fun ModernRoot(musicViewModel: MusicViewModel) {
                         tab = tab,
                         onSelectTab = { tabName = it.name },
                         onSettings = { showSettings = true },
+                        onOpenLibrary = { tabName = ModernTab.LIBRARY.name },
                         hasQueue = hasQueue,
                         playbackState = playbackState,
                         musicViewModel = musicViewModel,
@@ -161,6 +164,7 @@ private fun TabsLayer(
     tab: ModernTab,
     onSelectTab: (ModernTab) -> Unit,
     onSettings: () -> Unit,
+    onOpenLibrary: () -> Unit,
     hasQueue: Boolean,
     playbackState: State<PlaybackUiState>,
     musicViewModel: MusicViewModel,
@@ -181,6 +185,11 @@ private fun TabsLayer(
             .fillMaxSize()
             .then(if (sheet.isOpen) Modifier.clearAndSetSemantics { } else Modifier)
     ) {
+        // Behind the status bar and the greeting, at the very top.
+        if (tab == ModernTab.HOME) {
+            HomeHeaderWash()
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -188,15 +197,29 @@ private fun TabsLayer(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
                 )
         ) {
-            TopBar(onSettings = onSettings)
+            if (tab == ModernTab.HOME) {
+                // Home draws its own greeting and gear, so no TopBar.
+                HomeRoute(
+                    musicViewModel = musicViewModel,
+                    onSettings = onSettings,
+                    onOpenLibrary = onOpenLibrary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        // HomeRoute has no contentPadding parameter yet; keep it clear of the bars.
+                        .padding(contentPadding)
+                )
+            } else {
+                TopBar(onSettings = onSettings)
 
-            TabPlaceholder(
-                tab = tab,
-                contentPadding = contentPadding,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            )
+                TabPlaceholder(
+                    tab = tab,
+                    contentPadding = contentPadding,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            }
         }
 
         Column(

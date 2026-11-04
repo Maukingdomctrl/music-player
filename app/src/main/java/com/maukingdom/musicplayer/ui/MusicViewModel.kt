@@ -167,6 +167,16 @@ class MusicViewModel(
                 initialValue = emptySet()
             )
 
+    /** Songs per playlist id; playlists without songs are absent. */
+    val playlistSongCounts: StateFlow<Map<Long, Int>> =
+        repository.observePlaylistSongCounts()
+            .map { counts -> counts.associate { it.playlistId to it.songCount } }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyMap()
+            )
+
     private val mutableEditingSong = MutableStateFlow<SongEntity?>(null)
     val editingSong: StateFlow<SongEntity?> = mutableEditingSong.asStateFlow()
 
@@ -593,6 +603,39 @@ class MusicViewModel(
         val sourcePlaylistId = mutableSelectedPlaylistId.value?.takeIf {
             selectedPlaylistSongs.value.map { song -> song.id } == songIds
         }
+
+        startQueue(songsToPlay, startIndex, sourcePlaylistId)
+    }
+
+    /**
+     * Plays a whole playlist from its first song (Modern Home tiles and
+     * folder cards). Does not change the selected playlist.
+     */
+    fun playPlaylist(playlistId: Long) {
+        viewModelScope.launch {
+            val playlistSongs = try {
+                repository.getPlaylistSongs(playlistId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not open the playlist.")
+                return@launch
+            }
+
+            if (playlistSongs.isEmpty()) {
+                showError("This playlist has no songs yet.")
+            } else {
+                startQueue(playlistSongs, 0, playlistId)
+            }
+        }
+    }
+
+    private fun startQueue(
+        songsToPlay: List<SongEntity>,
+        startIndex: Int,
+        sourcePlaylistId: Long?
+    ) {
+        val songIds = songsToPlay.map { it.id }
 
         viewModelScope.launch {
             try {
