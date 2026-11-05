@@ -1,6 +1,11 @@
 package com.maukingdom.musicplayer.ui.v2.studio
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -26,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import androidx.compose.material.icons.automirrored.outlined.VolumeDown
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Pause
@@ -80,6 +86,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.media3.common.Player
+import com.maukingdom.musicplayer.playback.EqPreset
+import com.maukingdom.musicplayer.playback.SleepTimerState
+import com.maukingdom.musicplayer.ui.v2.components.Chip
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.heading
 import com.maukingdom.musicplayer.playback.visualiser.VISUALISER_BANDS
 import com.maukingdom.musicplayer.playback.visualiser.VisualiserBus
 import com.maukingdom.musicplayer.ui.player.PlayerActions
@@ -87,6 +106,8 @@ import com.maukingdom.musicplayer.ui.player.PlayerUi
 import com.maukingdom.musicplayer.ui.v2.LocalReduceMotion
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
+import com.maukingdom.musicplayer.ui.v2.ModernMotion
+import com.maukingdom.musicplayer.ui.v2.modernTween
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -109,7 +130,15 @@ fun StudioPlayer(
     actions: PlayerActions,
     tint: State<Color>,
     formatBadge: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    sleepTimer: SleepTimerState = SleepTimerState.Off,
+    onSleepTimer: () -> Unit = {},
+    onOpenQueue: (() -> Unit)? = null,
+    isFavourite: Boolean = false,
+    onToggleFavourite: (() -> Unit)? = null,
+    eqPreset: EqPreset = EqPreset.FLAT,
+    onSelectEqPreset: (EqPreset) -> Unit = {},
+    onResetTone: () -> Unit = {}
 ) {
     val reduceMotion = LocalReduceMotion.current
     var toneOpen by rememberSaveable { mutableStateOf(false) }
@@ -164,6 +193,13 @@ fun StudioPlayer(
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
+            if (onToggleFavourite != null && ui.hasQueue) {
+                FavouriteHeart(
+                    isFavourite = isFavourite,
+                    tint = tint,
+                    onToggle = onToggleFavourite
+                )
+            }
             if (formatBadge != null) {
                 Text(
                     text = formatBadge,
@@ -177,7 +213,17 @@ fun StudioPlayer(
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        // Grows in under the title while a sleep timer runs.
+        AnimatedVisibility(
+            visible = sleepTimer != SleepTimerState.Off,
+            enter = expandVertically(modernTween(ModernMotion.CROSSFADE_MS)) + fadeIn(modernTween(ModernMotion.CROSSFADE_MS)),
+            exit = shrinkVertically(modernTween(ModernMotion.CROSSFADE_MS)) + fadeOut(modernTween(ModernMotion.CROSSFADE_MS)),
+            label = "sleepChip"
+        ) {
+            SleepTimerChip(state = sleepTimer, onClick = onSleepTimer, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+        }
+
+        Spacer(Modifier.height(if (sleepTimer != SleepTimerState.Off) 8.dp else 20.dp))
 
         BeatVisualiser(
             tint = tint,
@@ -201,6 +247,7 @@ fun StudioPlayer(
             volume = ui.volume,
             onVolume = actions::setVolume,
             onOpenTone = { toneOpen = true },
+            onOpenQueue = onOpenQueue,
             modifier = Modifier.padding(start = 24.dp, end = 12.dp)
         )
 
@@ -208,7 +255,15 @@ fun StudioPlayer(
     }
 
     if (toneOpen) {
-        ToneSheet(ui = ui, actions = actions, tint = tint, onDismiss = { toneOpen = false })
+        EqualiserSheet(
+            ui = ui,
+            preset = eqPreset,
+            actions = actions,
+            tint = tint,
+            onSelectPreset = onSelectEqPreset,
+            onReset = onResetTone,
+            onDismiss = { toneOpen = false }
+        )
     }
 }
 
@@ -490,12 +545,18 @@ private fun PlainButton(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VolumeRow(volume: Float, onVolume: (Float) -> Unit, onOpenTone: () -> Unit, modifier: Modifier = Modifier) {
+private fun VolumeRow(
+    volume: Float,
+    onVolume: (Float) -> Unit,
+    onOpenTone: () -> Unit,
+    onOpenQueue: (() -> Unit)?,
+    modifier: Modifier = Modifier
+) {
     val steps = 15
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (onOpenQueue != null) 8.dp else 12.dp)
     ) {
         Icon(Icons.AutoMirrored.Outlined.VolumeDown, contentDescription = null, tint = White64, modifier = Modifier.size(18.dp))
         ThinSlider(
@@ -517,36 +578,116 @@ private fun VolumeRow(volume: Float, onVolume: (Float) -> Unit, onOpenTone: () -
             onClick = onOpenTone,
             tint = Color.White.copy(alpha = 0.8f)
         )
+        if (onOpenQueue != null) {
+            PlainButton(
+                icon = Icons.AutoMirrored.Outlined.QueueMusic,
+                label = "Up next",
+                size = 48.dp,
+                iconSize = 22.dp,
+                enabled = true,
+                onClick = onOpenQueue,
+                tint = Color.White.copy(alpha = 0.8f)
+            )
+        }
     }
 }
 
-/** Bass and treble, -6..+6 dB, the same tone control as Classic's knobs. */
+/**
+ * Equaliser: preset chips, then bass and treble on top of the preset (the
+ * same knobs as Classic), and Reset. Disabled when the phone has no equaliser.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ToneSheet(ui: PlayerUi, actions: PlayerActions, tint: State<Color>, onDismiss: () -> Unit) {
+private fun EqualiserSheet(
+    ui: PlayerUi,
+    preset: EqPreset,
+    actions: PlayerActions,
+    tint: State<Color>,
+    onSelectPreset: (EqPreset) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit
+) {
     val colors = Modern.colors
+    val available = ui.toneAvailable
+    val isReset = preset == EqPreset.FLAT && ui.bassDb == 0 && ui.trebleDb == 0
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = colors.surfaceHigh,
         contentColor = Color.White,
         scrimColor = colors.scrim,
-        shape = RoundedCornerShape(topStart = ModernDimens.sheetTop, topEnd = ModernDimens.sheetTop)
+        shape = RoundedCornerShape(topStart = ModernDimens.sheetTop, topEnd = ModernDimens.sheetTop),
+        contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal) }
     ) {
-        Column(
-            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Bass and treble", style = Modern.type.sectionTitle.copy(fontSize = 17.sp), color = Color.White)
-            if (!ui.toneAvailable) {
+        Column(modifier = Modifier.padding(bottom = 16.dp)) {
+            Row(
+                modifier = Modifier.padding(start = 24.dp, end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    "This phone did not allow the equaliser, so bass and treble cannot change.",
+                    "Equaliser",
+                    style = Modern.type.sectionTitle.copy(fontSize = 17.sp),
+                    color = Color.White,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { heading() }
+                )
+                TextButton(
+                    onClick = onReset,
+                    enabled = available && !isReset,
+                    modifier = Modifier.heightIn(min = ModernDimens.touchEffective)
+                ) {
+                    Text(
+                        "Reset",
+                        style = Modern.type.cardTitle,
+                        color = if (available && !isReset) colors.accent else Color.White.copy(alpha = 0.5f)
+                    )
+                }
+            }
+
+            if (!available) {
+                Text(
+                    "Equaliser not available on this phone",
                     style = Modern.type.rowSubtitle,
-                    color = colors.textSecondary
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 )
             }
-            ToneSlider("Bass", ui.bassDb, ui.toneAvailable, tint, actions::setBassDb)
-            ToneSlider("Treble", ui.trebleDb, ui.toneAvailable, tint, actions::setTrebleDb)
+
+            // Presets: one row that scrolls sideways when the text is large.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                EqPreset.entries.forEach { option ->
+                    Chip(
+                        text = option.label,
+                        selected = option == preset,
+                        enabled = available,
+                        onClick = { onSelectPreset(option) }
+                    )
+                }
+            }
+
+            Text(
+                "Bass and treble add to the preset.",
+                style = Modern.type.caption,
+                color = Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp)
+            )
+
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ToneSlider("Bass", ui.bassDb, available, tint, actions::setBassDb)
+                ToneSlider("Treble", ui.trebleDb, available, tint, actions::setTrebleDb)
+            }
         }
     }
 }

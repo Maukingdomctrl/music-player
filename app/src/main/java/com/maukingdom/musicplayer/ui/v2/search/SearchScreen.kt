@@ -73,6 +73,8 @@ import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.AddToPlaylistMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.FavouriteMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.QueueMenuItems
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenuButton
 import com.maukingdom.musicplayer.ui.v2.ModernMotion
 import com.maukingdom.musicplayer.ui.v2.components.ListRow
@@ -465,6 +467,8 @@ private fun LazyListScope.resultSections(
                 onClickLabel = "Play"
             ) {
                 SongMenuButton(songTitle = song.title) { close ->
+                    QueueMenuItems(songId = song.id, close = close)
+                    FavouriteMenuItem(songId = song.id, close = close)
                     AddToPlaylistMenuItem(songId = song.id, close = close)
                 }
             }

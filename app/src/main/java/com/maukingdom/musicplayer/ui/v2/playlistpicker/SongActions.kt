@@ -22,12 +22,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -88,6 +90,73 @@ fun SongMenuItem(label: String, enabled: Boolean = true, onClick: () -> Unit) {
         enabled = enabled,
         onClick = onClick
     )
+}
+
+/** Play next / Add to queue. Provided by PlaylistPickerHost; a no-op elsewhere. */
+@Stable
+class SongQueue(
+    private val onPlayNext: (List<String>) -> Unit,
+    private val onAddToQueue: (List<String>) -> Unit
+) {
+    fun playNext(songIds: List<String>) {
+        if (songIds.isNotEmpty()) onPlayNext(songIds)
+    }
+
+    fun addToQueue(songIds: List<String>) {
+        if (songIds.isNotEmpty()) onAddToQueue(songIds)
+    }
+}
+
+val LocalSongQueue = staticCompositionLocalOf { SongQueue({}, {}) }
+
+/** "Play next" and "Add to queue" for one song, closing the menu first. */
+@Composable
+fun QueueMenuItems(songId: String, close: () -> Unit) {
+    val queue = LocalSongQueue.current
+    SongMenuItem("Play next") {
+        close()
+        queue.playNext(listOf(songId))
+    }
+    SongMenuItem("Add to queue") {
+        close()
+        queue.addToQueue(listOf(songId))
+    }
+}
+
+/**
+ * Favourites for menus and multi-select. [songIds] is read only where a
+ * menu is open, so the set changing never recomposes song lists.
+ */
+@Stable
+class FavouriteActions(
+    private val songIds: State<Set<String>>,
+    private val onAdd: (List<String>) -> Unit,
+    private val onRemove: (List<String>) -> Unit
+) {
+    fun isFavourite(songId: String): Boolean = songId in songIds.value
+
+    fun add(songIds: List<String>) {
+        if (songIds.isNotEmpty()) onAdd(songIds)
+    }
+
+    fun remove(songIds: List<String>) {
+        if (songIds.isNotEmpty()) onRemove(songIds)
+    }
+}
+
+val LocalFavourites = staticCompositionLocalOf {
+    FavouriteActions(androidx.compose.runtime.mutableStateOf(emptySet()), {}, {})
+}
+
+/** "Add to Favourites", or "Remove from Favourites" when it already is one. */
+@Composable
+fun FavouriteMenuItem(songId: String, close: () -> Unit) {
+    val favourites = LocalFavourites.current
+    val isFavourite = favourites.isFavourite(songId)
+    SongMenuItem(if (isFavourite) "Remove from Favourites" else "Add to Favourites") {
+        close()
+        if (isFavourite) favourites.remove(listOf(songId)) else favourites.add(listOf(songId))
+    }
 }
 
 /** "Add to playlist…" for one song, closing the menu first. */

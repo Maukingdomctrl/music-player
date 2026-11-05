@@ -124,14 +124,17 @@ class BrowseTreeTest {
     }
 
     @Test
-    fun rootChildrenAreTheThreeSections() {
+    fun rootChildrenAreTheThreeSectionsThenFavourites() {
+        // Favourites is added last, so the original three keep their places in Android Auto.
         assertEquals(
-            listOf(BrowseId.Playlists, BrowseId.Recent, BrowseId.Library),
+            listOf(BrowseId.Playlists, BrowseId.Recent, BrowseId.Library, BrowseId.Favourites),
             BrowseTree.rootChildren
         )
         assertEquals("Playlists", BrowseTree.title(BrowseId.Playlists))
         assertEquals("Recently added", BrowseTree.title(BrowseId.Recent))
         assertEquals("All songs", BrowseTree.title(BrowseId.Library))
+        assertEquals("Favourites", BrowseTree.title(BrowseId.Favourites))
+        assertEquals(BrowseId.Favourites, BrowseTree.decode(BrowseTree.encode(BrowseId.Favourites)))
     }
 
     @Test

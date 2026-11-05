@@ -1,5 +1,10 @@
 package com.maukingdom.musicplayer.ui.v2.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -25,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -48,7 +54,11 @@ import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.ui.MusicViewModel
 import com.maukingdom.musicplayer.ui.v2.Modern
 import com.maukingdom.musicplayer.ui.v2.ModernDimens
+import com.maukingdom.musicplayer.ui.v2.ModernMotion
+import com.maukingdom.musicplayer.ui.v2.modernTween
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.AddToPlaylistMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.FavouriteMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.QueueMenuItems
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenu
 import com.maukingdom.musicplayer.ui.v2.components.CoverImage
 import com.maukingdom.musicplayer.ui.v2.components.SectionHeader
@@ -108,6 +118,14 @@ fun HomeRoute(
     }
     val greeting = rememberGreeting()
 
+    // Derived, so the 500 ms position ticks while playing (card hidden) never recompose Home.
+    val playbackState = musicViewModel.playbackState.collectAsStateWithLifecycle()
+    val playlistName = musicViewModel.queuePlaylistName.collectAsStateWithLifecycle()
+    val queueEdited = musicViewModel.queueEdited.collectAsStateWithLifecycle()
+    val continueCard by remember {
+        derivedStateOf { continueUi(playbackState.value, playlistName.value, queueEdited.value) }
+    }
+
     HomeScreen(
         content = content,
         greeting = greeting,
@@ -116,7 +134,9 @@ fun HomeRoute(
         onPlayRecent = { index -> musicViewModel.playSongs(content.recentlyAdded, index) },
         onOpenLibrary = onOpenLibrary,
         contentPadding = contentPadding,
-        modifier = modifier
+        modifier = modifier,
+        continueCard = continueCard,
+        onResume = musicViewModel::togglePlayPause
     )
 }
 
@@ -147,8 +167,14 @@ fun HomeScreen(
     onPlayRecent: (Int) -> Unit,
     onOpenLibrary: () -> Unit,
     contentPadding: PaddingValues,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    continueCard: ContinueUi? = null,
+    onResume: () -> Unit = {}
 ) {
+    // Keeps the last card on screen while it folds away (plain holder, never observed).
+    val lastCard = remember { arrayOfNulls<ContinueUi>(1) }
+    continueCard?.let { lastCard[0] = it }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         // [contentPadding] is what the mini player and navigation cover; the
@@ -159,6 +185,23 @@ fun HomeScreen(
     ) {
         item(key = "header", contentType = "header") {
             HomeHeader(greeting = greeting, onSettings = onSettings)
+        }
+
+        item(key = "continue", contentType = "continue") {
+            AnimatedVisibility(
+                visible = continueCard != null,
+                enter = expandVertically(modernTween(ModernMotion.COLOR_MS)) + fadeIn(modernTween(ModernMotion.COLOR_MS)),
+                exit = shrinkVertically(modernTween(ModernMotion.TEXT_SWAP_MS)) + fadeOut(modernTween(ModernMotion.TEXT_SWAP_MS)),
+                label = "continueListening"
+            ) {
+                (continueCard ?: lastCard[0])?.let { card ->
+                    ContinueListeningCard(
+                        ui = card,
+                        onResume = onResume,
+                        modifier = Modifier.padding(horizontal = ModernDimens.screenPadding, vertical = 8.dp)
+                    )
+                }
+            }
         }
 
         if (content.isEmpty) {
@@ -402,6 +445,8 @@ private fun RecentCard(song: SongEntity, onPlay: () -> Unit) {
         }
 
         SongMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) { close ->
+            QueueMenuItems(songId = song.id, close = close)
+            FavouriteMenuItem(songId = song.id, close = close)
             AddToPlaylistMenuItem(songId = song.id, close = close)
         }
     }

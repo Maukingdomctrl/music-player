@@ -61,6 +61,19 @@ import com.maukingdom.musicplayer.ui.v2.home.HomeRoute
 import com.maukingdom.musicplayer.ui.v2.library.LibraryRoute
 import com.maukingdom.musicplayer.ui.v2.playlist.PlaylistRoute
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalSongQueue
+import com.maukingdom.musicplayer.ui.v2.queue.UpNextActions
+import com.maukingdom.musicplayer.ui.v2.queue.UpNextSheet
+import com.maukingdom.musicplayer.ui.v2.studio.SleepTimerSheet
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.AddToQueue
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import com.maukingdom.musicplayer.ui.v2.studio.favouriteHeartLabel
+import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.outlined.QueuePlayNext
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistPickerHost
 import com.maukingdom.musicplayer.ui.v2.search.SearchRoute
 import com.maukingdom.musicplayer.ui.v2.studio.CoverColourSetting
@@ -446,9 +459,18 @@ private fun NowPlayingLayer(
     val songs by musicViewModel.songs.collectAsStateWithLifecycle()
     val actions = rememberModernPlayerActions(musicViewModel, onOpenSkinPicker = onOpenSettings)
     val queuePlaylistId by musicViewModel.queuePlaylistId.collectAsStateWithLifecycle()
+    val queueEdited by musicViewModel.queueEdited.collectAsStateWithLifecycle()
+    val sleepTimer by musicViewModel.sleepTimer.collectAsStateWithLifecycle()
+    val favouriteIds by musicViewModel.favouriteSongIds.collectAsStateWithLifecycle()
+    val eqPreset by musicViewModel.eqPreset.collectAsStateWithLifecycle()
     val picker = LocalPlaylistPicker.current
+    val songQueue = LocalSongQueue.current
     val playback = playbackState.value
     val songId = playback.currentSongId
+    val isFavourite = songId != null && songId in favouriteIds
+    // Saved, so an open sheet survives rotation.
+    var upNextOpen by rememberSaveable { mutableStateOf(false) }
+    var sleepOpen by rememberSaveable { mutableStateOf(false) }
 
     // One hue for the whole player: the cover's colour, or the skin's.
     val targetTint = rememberStudioTint(artwork, useCoverColour, Color(studioSkinTint(skin)))
@@ -466,9 +488,40 @@ private fun NowPlayingLayer(
         onSettle = onSettle,
         onChangeSkin = onOpenSettings,
         onClearQueue = actions::clearQueue,
-        onAddToPlaylist = songId?.let { id -> { picker.add(listOf(id)) } },
-        onMoveToPlaylist = songId?.let { id ->
-            queuePlaylistId?.let { from -> { picker.move(from, listOf(id)) } }
+        queueEdited = queueEdited,
+        songMenuItems = { close ->
+            if (songId != null) {
+                NowPlayingMenuItem("Play next", Icons.Outlined.QueuePlayNext, onClick = {
+                    close()
+                    songQueue.playNext(listOf(songId))
+                })
+                NowPlayingMenuItem("Add to queue", Icons.Outlined.AddToQueue, onClick = {
+                    close()
+                    songQueue.addToQueue(listOf(songId))
+                })
+                NowPlayingMenuItem(
+                    label = favouriteHeartLabel(isFavourite),
+                    icon = if (isFavourite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    onClick = {
+                        close()
+                        musicViewModel.toggleFavourite(songId)
+                    }
+                )
+                NowPlayingMenuItem("Add to playlist…", Icons.AutoMirrored.Outlined.PlaylistAdd, onClick = {
+                    close()
+                    picker.add(listOf(songId))
+                })
+                queuePlaylistId?.let { from ->
+                    NowPlayingMenuItem("Move to another playlist…", Icons.AutoMirrored.Outlined.DriveFileMove, onClick = {
+                        close()
+                        picker.move(from, listOf(songId))
+                    })
+                }
+            }
+            NowPlayingMenuItem("Sleep timer", Icons.Outlined.Bedtime, enabled = playback.connected, onClick = {
+                close()
+                sleepOpen = true
+            })
         },
         tintProvider = { tint.value }
     ) {
@@ -483,7 +536,32 @@ private fun NowPlayingLayer(
             actions = actions,
             tint = tint,
             formatBadge = badge,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            sleepTimer = sleepTimer,
+            onSleepTimer = { sleepOpen = true },
+            onOpenQueue = { upNextOpen = true },
+            isFavourite = isFavourite,
+            onToggleFavourite = songId?.let { id -> { musicViewModel.toggleFavourite(id) } },
+            eqPreset = eqPreset,
+            onSelectEqPreset = musicViewModel::setEqPreset,
+            onResetTone = musicViewModel::resetTone
         )
+    }
+
+    if (upNextOpen) {
+        val queue by musicViewModel.queue.collectAsStateWithLifecycle()
+        val upNextActions = remember(musicViewModel) {
+            object : UpNextActions {
+                override fun play(index: Int) = musicViewModel.playQueueItem(index)
+                override fun move(from: Int, to: Int) = musicViewModel.moveQueueItem(from, to)
+                override fun remove(index: Int) = musicViewModel.removeQueueItem(index)
+                override fun clearUpcoming() = musicViewModel.clearUpcoming()
+            }
+        }
+        UpNextSheet(queue = queue, actions = upNextActions, onDismiss = { upNextOpen = false })
+    }
+
+    if (sleepOpen) {
+        SleepTimerSheet(state = sleepTimer, onSelect = musicViewModel::setSleepTimer, onDismiss = { sleepOpen = false })
     }
 }

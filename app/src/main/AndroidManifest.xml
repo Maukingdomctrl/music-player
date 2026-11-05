@@ -67,6 +67,20 @@
             android:authorities="com.maukingdom.musicplayer.artwork"
             android:exported="true" />
 
+        <!-- Home-screen player widget (4x1 to 4x2). Updated by PlaybackService. -->
+        <receiver
+            android:name=".playback.widget.PlayerWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/player_widget_info" />
+        </receiver>
+
         <!-- Declares the app as an Android Auto media app. -->
         <meta-data
             android:name="com.google.android.gms.car.application"

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Bundle
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
@@ -14,6 +15,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import com.maukingdom.musicplayer.data.FavouritesRules
+import com.maukingdom.musicplayer.data.FavouritesStore
 import com.maukingdom.musicplayer.data.FolderPlaylistEntity
 import com.maukingdom.musicplayer.data.ImportResult
 import com.maukingdom.musicplayer.data.MetadataReader
@@ -22,6 +25,7 @@ import com.maukingdom.musicplayer.data.MusicImporter
 import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaybackPreferences
 import com.maukingdom.musicplayer.data.PlaylistEdit
+import com.maukingdom.musicplayer.data.QueueOriginRecord
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.data.SongEntity
 import com.maukingdom.musicplayer.data.SongMetadata
@@ -31,12 +35,30 @@ import com.maukingdom.musicplayer.ui.v2.cover.coverCandidates
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.ImportOffer
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistEditKind
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.PlaylistEditResult
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.QueueEditResult
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.importOffer
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.playlistEditMessage
 import com.maukingdom.musicplayer.playback.ArtworkPaths
 import com.maukingdom.musicplayer.playback.MediaItemMapper
 import com.maukingdom.musicplayer.playback.PlaybackService
 import com.maukingdom.musicplayer.playback.PlayerConnection
+import com.maukingdom.musicplayer.playback.EqPreset
+import com.maukingdom.musicplayer.playback.SleepTimerState
+import com.maukingdom.musicplayer.ui.v2.queue.QueueEntry
+import com.maukingdom.musicplayer.ui.v2.queue.QueueOrigin
+import com.maukingdom.musicplayer.ui.v2.queue.QueueUi
+import com.maukingdom.musicplayer.ui.v2.queue.QueueUndo
+import com.maukingdom.musicplayer.ui.v2.queue.canUndoInsert
+import com.maukingdom.musicplayer.ui.v2.queue.insertAt
+import com.maukingdom.musicplayer.ui.v2.queue.keepOnly
+import com.maukingdom.musicplayer.ui.v2.queue.moveItem
+import com.maukingdom.musicplayer.ui.v2.queue.playNextIndex
+import com.maukingdom.musicplayer.ui.v2.queue.queueAddMessage
+import com.maukingdom.musicplayer.ui.v2.queue.queueFingerprint
+import com.maukingdom.musicplayer.ui.v2.queue.queueKeys
+import com.maukingdom.musicplayer.ui.v2.queue.removeAt
+import com.maukingdom.musicplayer.ui.v2.queue.resolveOrigin
+import com.maukingdom.musicplayer.ui.v2.queue.upcomingIndices
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -128,6 +150,22 @@ class MusicViewModel(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = emptyList()
+    )
+
+    private val favourites = FavouritesStore(repository, preferences)
+
+    /** The Favourites playlist id while it exists (heart badge), else null. Read-only. */
+    val favouritesPlaylistId: StateFlow<Long?> = favourites.playlistId.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = null
+    )
+
+    /** Ids of the songs in Favourites. Read-only. */
+    val favouriteSongIds: StateFlow<Set<String>> = favourites.songIds.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptySet()
     )
 
     // Saved, so the open playlist survives Android killing the app (#19).
@@ -306,6 +344,15 @@ class MusicViewModel(
             initialValue = 0
         )
 
+    /** The equaliser preset; bass and treble apply on top of it. */
+    val eqPreset: StateFlow<EqPreset> = preferences.appPreferences
+        .map { EqPreset.fromId(it.eqPresetId) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = EqPreset.FLAT
+        )
+
     /** Treble in whole dB, -6..+6. */
     val trebleDb: StateFlow<Int> = preferences.appPreferences
         .map { it.trebleDb }
@@ -326,12 +373,32 @@ class MusicViewModel(
      */
     val currentArtwork: StateFlow<ImageBitmap?> = mutableCurrentArtwork.asStateFlow()
 
-    /** The playlist the current queue was started from, if any. */
-    private data class QueueSource(val songIds: List<String>, val playlistId: Long)
-
-    /** Main thread only. Cleared once the player's queue no longer matches it. */
-    private var queueSource: QueueSource? = null
+    /**
+     * Where this app last set the queue from, saved so a restored queue
+     * keeps its caption. Main thread only. It describes the player's queue
+     * only while the queue's fingerprint still matches (see resolveOrigin).
+     */
+    private var queueOrigin: QueueOrigin? = null
+    private var queueOriginSetHere = false
+    /** The player's queue song ids, refreshed on timeline changes. Main thread only. */
+    private var playerQueueIds: List<String> = emptyList()
     private val mutableQueuePlaylistId = MutableStateFlow<Long?>(null)
+    private val mutableQueueEdited = MutableStateFlow(false)
+
+    /** True when the user changed the queue in Modern (caption "PLAYING FROM QUEUE"). Read-only. */
+    val queueEdited: StateFlow<Boolean> = mutableQueueEdited.asStateFlow()
+
+    private val mutableQueue = MutableStateFlow(QueueUi())
+
+    /** Now playing and up next, for Modern's Up next sheet. Rebuilt on queue changes only. */
+    val queue: StateFlow<QueueUi> = mutableQueue.asStateFlow()
+
+    /** Modern only: Play next / Add to queue results for the snackbar. */
+    private val queueEditChannel = Channel<QueueEditResult>(Channel.BUFFERED)
+    val queueEditResults: Flow<QueueEditResult> = queueEditChannel.receiveAsFlow()
+
+    /** The service's sleep timer (Modern Studio player). */
+    val sleepTimer: StateFlow<SleepTimerState> = PlaybackService.sleepTimer
 
     /** Id of the playlist the queue was started from in this app, or null. Read-only. */
     val queuePlaylistId: StateFlow<Long?> = mutableQueuePlaylistId.asStateFlow()
@@ -354,6 +421,15 @@ class MusicViewModel(
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
+            if (events.containsAny(
+                    Player.EVENT_TIMELINE_CHANGED,
+                    Player.EVENT_MEDIA_ITEM_TRANSITION,
+                    Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                    Player.EVENT_MEDIA_METADATA_CHANGED
+                )
+            ) {
+                refreshQueue(player, timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED))
+            }
             updatePlaybackState(player)
         }
     }
@@ -386,6 +462,7 @@ class MusicViewModel(
 
                 if (controller != null) {
                     controller.addListener(playerListener)
+                    refreshQueue(controller, timelineChanged = true)
                     updatePlaybackState(controller)
                 } else {
                     publishPlaybackState(
@@ -423,6 +500,19 @@ class MusicViewModel(
 
         viewModelScope.launch {
             folderController.state.collect(::onFolderOperationState)
+        }
+
+        viewModelScope.launch {
+            val saved = try {
+                preferences.getQueueOrigin()
+            } catch (error: Exception) {
+                null
+            }
+            // A queue started meanwhile wins over the saved origin.
+            if (!queueOriginSetHere && saved != null) {
+                queueOrigin = QueueOrigin(saved.playlistId, saved.edited, saved.fingerprint)
+                applyQueueOrigin()
+            }
         }
 
         viewModelScope.launch {
@@ -519,17 +609,6 @@ class MusicViewModel(
     private fun updatePlaybackState(player: Player) {
         val metadata = player.mediaMetadata
         val duration = player.duration
-
-        queueSource?.let { source ->
-            val stillSameQueue = player.mediaItemCount == source.songIds.size &&
-                player.currentMediaItem?.mediaId ==
-                source.songIds.getOrNull(player.currentMediaItemIndex)
-
-            if (!stillSameQueue) {
-                queueSource = null
-                mutableQueuePlaylistId.value = null
-            }
-        }
 
         publishPlaybackState(PlaybackUiState(
             connected = true,
@@ -751,15 +830,208 @@ class MusicViewModel(
                     }
                 }
 
-                if (connection.playQueue(items, safeIndex)) {
-                    queueSource = sourcePlaylistId?.let { QueueSource(songIds, it) }
-                    mutableQueuePlaylistId.value = sourcePlaylistId
-                } else {
+                // Set first: the controller may report the new queue during playQueue.
+                val previous = queueOrigin
+                setQueueOrigin(QueueOrigin(sourcePlaylistId, edited = false, fingerprint = queueFingerprint(songIds)))
+
+                if (!connection.playQueue(items, safeIndex)) {
+                    setQueueOrigin(previous)
                     showError("Playback service is not connected yet.")
                 }
             } catch (error: Exception) {
                 showError(error.message ?: "Could not start playback.")
             }
+        }
+    }
+
+    /** Rebuilds [queue] and re-checks the origin. Main thread. */
+    private fun refreshQueue(player: Player, timelineChanged: Boolean) {
+        val count = player.mediaItemCount
+        val previous = mutableQueue.value
+        val entries: List<QueueEntry>
+
+        if (timelineChanged || previous.current == null && count > 0) {
+            val ids = List(count) { player.getMediaItemAt(it).mediaId }
+            if (ids != playerQueueIds) {
+                playerQueueIds = ids
+                applyQueueOrigin()
+            }
+            val keys = queueKeys(ids)
+            entries = List(count) { index ->
+                val item = player.getMediaItemAt(index)
+                QueueEntry(
+                    index = index,
+                    key = keys[index],
+                    songId = item.mediaId,
+                    title = item.mediaMetadata.title?.toString().orEmpty(),
+                    artist = item.mediaMetadata.artist?.toString().orEmpty()
+                )
+            }
+            cachedQueueEntries = entries
+        } else {
+            entries = cachedQueueEntries
+        }
+
+        val current = player.currentMediaItemIndex
+        val timeline = player.currentTimeline
+        val shuffle = player.shuffleModeEnabled
+        val upcoming = if (timeline.isEmpty || current !in entries.indices) {
+            emptyList()
+        } else {
+            upcomingIndices(current, entries.size) { index ->
+                timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, shuffle).takeIf { it != C.INDEX_UNSET }
+            }
+        }
+
+        mutableQueue.value = QueueUi(
+            current = entries.getOrNull(current),
+            upcoming = upcoming.mapNotNull { entries.getOrNull(it) },
+            shuffle = shuffle
+        )
+    }
+
+    /** Main thread only; see [refreshQueue]. */
+    private var cachedQueueEntries: List<QueueEntry> = emptyList()
+
+    private fun applyQueueOrigin() {
+        val resolved = resolveOrigin(queueOrigin, playerQueueIds)
+        mutableQueuePlaylistId.value = resolved.playlistId
+        mutableQueueEdited.value = resolved.edited
+    }
+
+    /** Remembers (and saves) where the queue now comes from, updating the caption at once. */
+    private fun setQueueOrigin(origin: QueueOrigin?) {
+        queueOrigin = origin
+        queueOriginSetHere = true
+        mutableQueuePlaylistId.value = origin?.takeUnless { it.edited }?.playlistId
+        mutableQueueEdited.value = origin?.edited == true
+
+        if (origin != null) {
+            viewModelScope.launch {
+                try {
+                    preferences.saveQueueOrigin(QueueOriginRecord(origin.playlistId, origin.edited, origin.fingerprint))
+                } catch (error: Exception) {
+                    // Only the caption after a restart is affected.
+                }
+            }
+        }
+    }
+
+    /** Marks the queue as edited by the user, expecting it to become [expectedIds]. */
+    private fun markQueueEdited(expectedIds: List<String>) {
+        setQueueOrigin(QueueOrigin(playlistId = null, edited = true, fingerprint = queueFingerprint(expectedIds)))
+    }
+
+    private fun currentQueueIds(player: Player): List<String> =
+        List(player.mediaItemCount) { player.getMediaItemAt(it).mediaId }
+
+    /** Modern: inserts [songIds] after the current song, or starts playback if nothing is queued. */
+    fun playNext(songIds: List<String>) = enqueue(songIds, playNext = true)
+
+    /** Modern: appends [songIds] to the queue, or starts playback if nothing is queued. */
+    fun addToQueue(songIds: List<String>) = enqueue(songIds, playNext = false)
+
+    private fun enqueue(songIds: List<String>, playNext: Boolean) {
+        if (songIds.isEmpty()) return
+
+        viewModelScope.launch {
+            try {
+                val songsToAdd = withContext(Dispatchers.IO) { songIds.mapNotNull { repository.getSong(it) } }
+                if (songsToAdd.isEmpty()) {
+                    showError("Those songs are no longer in the library.")
+                    return@launch
+                }
+
+                val player = observedPlayer ?: run {
+                    showError("Playback service is not connected yet.")
+                    return@launch
+                }
+
+                if (player.mediaItemCount == 0) {
+                    startQueue(songsToAdd, 0, null)
+                    queueEditChannel.send(QueueEditResult(message = "Playing now", undo = null))
+                    return@launch
+                }
+
+                val ids = currentQueueIds(player)
+                val index = if (playNext) {
+                    playNextIndex(player.currentMediaItemIndex, ids.size)
+                } else {
+                    ids.size
+                }
+                val addedIds = songsToAdd.map { it.id }
+                val previous = queueOrigin
+
+                markQueueEdited(insertAt(ids, index, addedIds))
+                player.addMediaItems(index, songsToAdd.map { MediaItemMapper.fromSong(it) })
+
+                queueEditChannel.send(
+                    QueueEditResult(
+                        message = queueAddMessage(playNext, addedIds.size),
+                        undo = QueueUndo(index, addedIds, previous)
+                    )
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not change the queue.")
+            }
+        }
+    }
+
+    /** Takes out what Play next / Add to queue put in, if it is still where it went. */
+    fun undoQueueEdit(undo: QueueUndo) {
+        val player = observedPlayer ?: return
+        val ids = currentQueueIds(player)
+        if (!canUndoInsert(ids, undo)) {
+            showError("The queue changed, so that could not be undone.")
+            return
+        }
+        setQueueOrigin(undo.previousOrigin)
+        player.removeMediaItems(undo.index, undo.index + undo.songIds.size)
+    }
+
+    /** Up next: moves item [from] to [to] (player item indices). */
+    fun moveQueueItem(from: Int, to: Int) {
+        val player = observedPlayer ?: return
+        val ids = currentQueueIds(player)
+        if (from !in ids.indices || to !in ids.indices || from == to) return
+        markQueueEdited(moveItem(ids, from, to))
+        player.moveMediaItem(from, to)
+    }
+
+    /** Up next: removes item [index]; never the song playing now. */
+    fun removeQueueItem(index: Int) {
+        val player = observedPlayer ?: return
+        if (index == player.currentMediaItemIndex || index !in 0 until player.mediaItemCount) return
+        markQueueEdited(removeAt(currentQueueIds(player), index))
+        player.removeMediaItem(index)
+    }
+
+    /** Up next: keeps only the song playing now. */
+    fun clearUpcoming() {
+        val player = observedPlayer ?: return
+        val current = player.currentMediaItemIndex
+        val count = player.mediaItemCount
+        if (count <= 1 || current !in 0 until count) return
+        markQueueEdited(keepOnly(currentQueueIds(player), current))
+        if (current + 1 < count) player.removeMediaItems(current + 1, count)
+        if (current > 0) player.removeMediaItems(0, current)
+    }
+
+    /** Up next: plays item [index] from its start. */
+    fun playQueueItem(index: Int) {
+        val player = observedPlayer ?: return
+        if (index !in 0 until player.mediaItemCount) return
+        player.seekTo(index, 0L)
+        player.play()
+    }
+
+    /** [arg]: minutes, SleepTimerMath.ARG_END_OF_SONG or ARG_OFF. */
+    fun setSleepTimer(arg: Int) {
+        val args = Bundle().apply { putInt(PlaybackService.EXTRA_SLEEP_ARG, arg) }
+        if (!connection.sendCommand(PlaybackService.ACTION_SET_SLEEP_TIMER, args)) {
+            showError("Playback service is not connected yet.")
         }
     }
 
@@ -970,6 +1242,26 @@ class MusicViewModel(
         }
     }
 
+    /** Studio heart: adds or removes [songId]; the heart itself shows the result. */
+    fun toggleFavourite(songId: String) {
+        runLibraryAction { favourites.toggle(songId) }
+    }
+
+    /** Menus and multi-select: puts [songIds] at the top of Favourites, with an Undo snackbar. */
+    fun addToFavourites(songIds: List<String>) {
+        if (songIds.isEmpty()) return
+        runLibraryAction {
+            reportPlaylistEdit(PlaylistEditKind.ADD, FavouritesRules.NAME, favourites.add(songIds))
+        }
+    }
+
+    fun removeFromFavourites(songIds: List<String>) {
+        if (songIds.isEmpty()) return
+        runLibraryAction {
+            reportPlaylistEdit(PlaylistEditKind.REMOVE, FavouritesRules.NAME, favourites.remove(songIds))
+        }
+    }
+
     fun undoPlaylistEdit(edit: PlaylistEdit) {
         runLibraryAction {
             repository.undoPlaylistEdit(edit)
@@ -1122,6 +1414,27 @@ class MusicViewModel(
                 preferences.setBassDb(db)
             } catch (error: Exception) {
                 showError(error.message ?: "Could not save the bass setting.")
+            }
+        }
+    }
+
+    fun setEqPreset(preset: EqPreset) {
+        viewModelScope.launch {
+            try {
+                preferences.setEqPreset(preset.id)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not save the equaliser preset.")
+            }
+        }
+    }
+
+    /** Flat preset, bass and treble 0. */
+    fun resetTone() {
+        viewModelScope.launch {
+            try {
+                preferences.resetTone(EqPreset.FLAT.id)
+            } catch (error: Exception) {
+                showError(error.message ?: "Could not reset the equaliser.")
             }
         }
     }

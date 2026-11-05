@@ -132,6 +132,27 @@ class PlayerConnection(context: Context) : Closeable {
         }
     }
 
+    /**
+     * Submits one of the service's app-only custom commands ([action]) with
+     * [args]. Returns false if not connected or the command is unavailable.
+     */
+    fun sendCommand(action: String, args: Bundle = Bundle.EMPTY): Boolean {
+        val connectedController = mutableController.value ?: return false
+
+        return try {
+            if (!connectedController.isConnected) return false
+
+            val command = SessionCommand(action, Bundle.EMPTY)
+            if (!connectedController.availableSessionCommands.contains(command)) return false
+
+            connectedController.sendCustomCommand(command, args)
+            true
+        } catch (error: RuntimeException) {
+            Log.e(TAG, "Could not submit $action.", error)
+            false
+        }
+    }
+
     override fun close() {
         if (closed) return
 

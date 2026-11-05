@@ -386,6 +386,27 @@ class MusicRepository(
         }
     }
 
+    /**
+     * Puts [songIds] at the top of [playlistId] in one transaction (newest
+     * first), skipping songs already there. For Favourites.
+     */
+    suspend fun prependSongsToPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
+        return database.withTransaction {
+            checkNotNull(dao.getPlaylist(playlistId)) { "Playlist no longer exists." }
+
+            val plan = planPrepend(
+                playlistId = playlistId,
+                existingIds = dao.getPlaylistEntries(playlistId).mapTo(HashSet()) { it.songId },
+                firstPosition = dao.getFirstPlaylistPosition(playlistId),
+                songIds = songIds,
+                knownSongIds = dao.getAllSongIds().toHashSet()
+            )
+            val added = plan.entries.filter { dao.insertPlaylistSong(it) != -1L }.map { it.songId }
+
+            PlaylistEdit(addedTo = playlistId, addedSongIds = added, skipped = plan.skipped)
+        }
+    }
+
     /** Must be called inside a transaction. */
     private suspend fun appendInTransaction(playlistId: Long, songIds: List<String>): PlaylistEdit {
         val plan = planAppend(

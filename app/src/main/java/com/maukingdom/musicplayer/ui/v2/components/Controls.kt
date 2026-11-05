@@ -77,7 +77,8 @@ fun Chip(
     text: String,
     selected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     val colors = Modern.colors
     val shape = RoundedCornerShape(ModernDimens.chip)
@@ -85,7 +86,8 @@ fun Chip(
     Box(
         modifier = modifier
             .heightIn(min = ModernDimens.touchEffective)
-            .selectable(selected = selected, role = Role.Tab, onClick = onClick),
+            .selectable(selected = selected, enabled = enabled, role = Role.Tab, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.4f),
         contentAlignment = Alignment.Center
     ) {
         Text(

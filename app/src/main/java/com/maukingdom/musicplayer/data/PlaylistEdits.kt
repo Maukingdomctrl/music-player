@@ -40,6 +40,24 @@ internal fun planAppend(
     return AppendPlan(entries, skipped)
 }
 
+/**
+ * Puts [songIds] at the top of [playlistId] (before [firstPosition]), in
+ * the given order, so the newest additions come first. Same skip and
+ * dedupe rules as [planAppend]. Positions may go below zero.
+ */
+internal fun planPrepend(
+    playlistId: Long,
+    existingIds: Set<String>,
+    firstPosition: Long,
+    songIds: List<String>,
+    knownSongIds: Set<String>
+): AppendPlan {
+    val append = planAppend(playlistId, existingIds, lastPosition = -1L, songIds, knownSongIds)
+    val count = append.entries.size
+    val start = firstPosition - count
+    return append.copy(entries = append.entries.mapIndexed { index, entry -> entry.copy(position = start + index) })
+}
+
 /** A song taken out of a playlist and its index there, for undo. */
 data class RemovedSong(val songId: String, val index: Int)
 

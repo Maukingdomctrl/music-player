@@ -26,6 +26,8 @@ sealed interface BrowseId {
     data object Playlists : Node
     data object Recent : Node
     data object Library : Node
+    /** The Favourites playlist's songs (empty until the first heart). */
+    data object Favourites : Node
     data class Playlist(val playlistId: Long) : Node
 
     data class PlaylistSong(
@@ -46,11 +48,13 @@ object BrowseTree {
     const val PLAYLISTS = "node:playlists"
     const val RECENT = "node:recent"
     const val LIBRARY = "node:library"
+    const val FAVOURITES = "node:favourites"
 
     const val ROOT_TITLE = "MyCar Music"
     const val PLAYLISTS_TITLE = "Playlists"
     const val RECENT_TITLE = "Recently added"
     const val LIBRARY_TITLE = "All songs"
+    const val FAVOURITES_TITLE = "Favourites"
 
     /** Number of songs listed under "Recently added". */
     const val RECENT_LIMIT = 50
@@ -63,11 +67,12 @@ object BrowseTree {
     private const val CTX_LIBRARY = "ctx:library"
     private const val SEPARATOR = '|'
 
-    /** The children of the root node, in display order. */
+    /** The children of the root node, in display order. Favourites is last, so the others keep their places. */
     val rootChildren: List<BrowseId.Node> = listOf(
         BrowseId.Playlists,
         BrowseId.Recent,
-        BrowseId.Library
+        BrowseId.Library,
+        BrowseId.Favourites
     )
 
     fun encode(id: BrowseId): String = when (id) {
@@ -75,6 +80,7 @@ object BrowseTree {
         BrowseId.Playlists -> PLAYLISTS
         BrowseId.Recent -> RECENT
         BrowseId.Library -> LIBRARY
+        BrowseId.Favourites -> FAVOURITES
         is BrowseId.Playlist -> "$PLAYLIST_NODE_PREFIX${id.playlistId}"
         is BrowseId.PlaylistSong -> "$CTX_PLAYLIST${id.playlistId}$SEPARATOR${id.songId}"
         is BrowseId.RecentSong -> "$CTX_RECENT$SEPARATOR${id.songId}"
@@ -107,6 +113,7 @@ object BrowseTree {
         BrowseId.Playlists -> PLAYLISTS_TITLE
         BrowseId.Recent -> RECENT_TITLE
         BrowseId.Library -> LIBRARY_TITLE
+        BrowseId.Favourites -> FAVOURITES_TITLE
         is BrowseId.Playlist -> null
     }
 
@@ -138,6 +145,7 @@ object BrowseTree {
         raw == PLAYLISTS -> BrowseId.Playlists
         raw == RECENT -> BrowseId.Recent
         raw == LIBRARY -> BrowseId.Library
+        raw == FAVOURITES -> BrowseId.Favourites
         raw.startsWith(PLAYLIST_NODE_PREFIX) ->
             parsePlaylistId(raw.removePrefix(PLAYLIST_NODE_PREFIX))
                 ?.let { BrowseId.Playlist(it) }

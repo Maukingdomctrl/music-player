@@ -44,7 +44,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
-import androidx.compose.material.icons.outlined.PlaylistRemove
+import androidx.compose.material.icons.outlined.QueuePlayNext
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
@@ -104,6 +105,11 @@ import com.maukingdom.musicplayer.ui.v2.cover.LivingCover
 import com.maukingdom.musicplayer.ui.v2.components.songCoverUri
 import com.maukingdom.musicplayer.ui.v2.library.rememberLibraryPickers
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.FavouriteMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalFavourites
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalSongQueue
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenu
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenuItem
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionCheck
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionTopBar
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.rememberSongSelection
@@ -125,6 +131,8 @@ data class PlaylistUi(
     val id: Long,
     val name: String,
     val isFolder: Boolean,
+    /** The Favourites playlist: a heart badge in the header. */
+    val isFavourites: Boolean = false,
     /** Null while the songs are still the previous playlist's (loading). */
     val songs: List<SongEntity>?,
     val syncedText: String?,
@@ -155,6 +163,9 @@ interface PlaylistActions {
     fun moveToPlaylist(songIds: List<String>)
     /** Removes several songs at once, with undo. */
     fun removeSongs(songIds: List<String>)
+    fun playNext(songIds: List<String>)
+    fun addToQueue(songIds: List<String>)
+    fun addToFavourites(songIds: List<String>)
 }
 
 /**
@@ -179,6 +190,7 @@ fun PlaylistRoute(
     val folderOperation by musicViewModel.folderOperation.collectAsStateWithLifecycle()
     val libraryOperation by musicViewModel.libraryOperation.collectAsStateWithLifecycle()
     val queuedPlaylistId by musicViewModel.queuePlaylistId.collectAsStateWithLifecycle()
+    val favouritesId by musicViewModel.favouritesPlaylistId.collectAsStateWithLifecycle()
 
     // Only the fields this screen needs, so 500 ms position ticks do not recompose it.
     val playbackState = musicViewModel.playbackState.collectAsStateWithLifecycle()
@@ -204,6 +216,8 @@ fun PlaylistRoute(
 
     val pickers = rememberLibraryPickers(musicViewModel)
     val playlistPicker = LocalPlaylistPicker.current
+    val songQueue = LocalSongQueue.current
+    val favourites = LocalFavourites.current
     val latestOnBack by rememberUpdatedState(onBack)
     val isFolder = playlistId in folderIds
     val songs = content.songs.takeIf { content.playlistId == playlistId }
@@ -214,6 +228,7 @@ fun PlaylistRoute(
         id = playlistId,
         name = playlist?.name.orEmpty(),
         isFolder = isFolder,
+        isFavourites = playlistId == favouritesId,
         songs = songs,
         syncedText = if (isFolder) syncedLabel(link?.lastSyncedAtMs, now) else null,
         syncing = running?.playlistId == playlistId,
@@ -225,7 +240,7 @@ fun PlaylistRoute(
         busy = running != null || libraryOperation.loading
     )
 
-    val actions = remember(musicViewModel, playlistId, pickers, playlistPicker) {
+    val actions = remember(musicViewModel, playlistId, pickers, playlistPicker, songQueue, favourites) {
         object : PlaylistActions {
             private fun currentSongs(): List<SongEntity> =
                 musicViewModel.selectedPlaylistContent.value
@@ -281,6 +296,12 @@ fun PlaylistRoute(
             override fun moveToPlaylist(songIds: List<String>) = playlistPicker.move(playlistId, songIds)
 
             override fun removeSongs(songIds: List<String>) = musicViewModel.removeSongsFromPlaylist(playlistId, songIds)
+
+            override fun playNext(songIds: List<String>) = songQueue.playNext(songIds)
+
+            override fun addToQueue(songIds: List<String>) = songQueue.addToQueue(songIds)
+
+            override fun addToFavourites(songIds: List<String>) = favourites.add(songIds)
         }
     }
 
@@ -378,6 +399,8 @@ fun PlaylistScreen(
                             if (ui.isFolder) removeSongId = song.id else actions.removeSong(song.id)
                         },
                         onAddToPlaylist = { actions.addToPlaylist(listOf(song.id)) },
+                        onPlayNext = { actions.playNext(listOf(song.id)) },
+                        onAddToQueue = { actions.addToQueue(listOf(song.id)) },
                         onMoveToPlaylist = { actions.moveToPlaylist(listOf(song.id)) }
                     )
                 }
@@ -424,25 +447,44 @@ fun PlaylistScreen(
                     }
                 )
                 V2IconButton(
-                    icon = Icons.AutoMirrored.Outlined.DriveFileMove,
-                    contentDescription = "Move to playlist",
+                    icon = Icons.Outlined.QueuePlayNext,
+                    contentDescription = "Play next",
                     onClick = {
-                        actions.moveToPlaylist(selectedInOrder())
+                        actions.playNext(selectedInOrder())
                         selection.clear()
                     }
                 )
-                V2IconButton(
-                    icon = Icons.Outlined.PlaylistRemove,
-                    contentDescription = "Remove from playlist",
-                    onClick = {
-                        if (ui.isFolder) {
-                            confirmRemoveSelected = true
-                        } else {
-                            actions.removeSongs(selectedInOrder())
+                // The rest in an overflow, so the count keeps room at 384 dp and 1.3x text.
+                Box {
+                    var more by remember { mutableStateOf(false) }
+                    V2IconButton(icon = Icons.Outlined.MoreVert, contentDescription = "More actions", onClick = { more = true })
+                    SongMenu(expanded = more, onDismiss = { more = false }) { close ->
+                        SongMenuItem("Add to queue") {
+                            close()
+                            actions.addToQueue(selectedInOrder())
                             selection.clear()
                         }
+                        SongMenuItem("Add to Favourites") {
+                            close()
+                            actions.addToFavourites(selectedInOrder())
+                            selection.clear()
+                        }
+                        SongMenuItem("Move to playlist…") {
+                            close()
+                            actions.moveToPlaylist(selectedInOrder())
+                            selection.clear()
+                        }
+                        SongMenuItem("Remove from playlist") {
+                            close()
+                            if (ui.isFolder) {
+                                confirmRemoveSelected = true
+                            } else {
+                                actions.removeSongs(selectedInOrder())
+                                selection.clear()
+                            }
+                        }
                     }
-                )
+                }
             }
         }
     }
@@ -576,10 +618,10 @@ private fun PlaylistHeader(ui: PlaylistUi, topPadding: Dp, actions: PlaylistActi
             modifier = Modifier.padding(horizontal = ModernDimens.screenPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (ui.isFolder) {
+            if (ui.isFavourites || ui.isFolder) {
                 Icon(
-                    imageVector = Icons.Filled.Folder,
-                    contentDescription = "SD-card folder",
+                    imageVector = if (ui.isFavourites) Icons.Filled.Favorite else Icons.Filled.Folder,
+                    contentDescription = if (ui.isFavourites) "Favourites" else "SD-card folder",
                     tint = colors.accent,
                     modifier = Modifier.size(13.dp)
                 )
@@ -758,6 +800,8 @@ private fun SongRow(
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
     onMoveToPlaylist: () -> Unit
 ) {
     val colors = Modern.colors
@@ -806,6 +850,15 @@ private fun SongRow(
                     open = false
                     onMove(1)
                 }
+                MenuItem("Play next") {
+                    open = false
+                    onPlayNext()
+                }
+                MenuItem("Add to queue") {
+                    open = false
+                    onAddToQueue()
+                }
+                FavouriteMenuItem(songId = song.id, close = { open = false })
                 MenuItem("Add to playlist…") {
                     open = false
                     onAddToPlaylist()

@@ -5,6 +5,7 @@ import com.maukingdom.musicplayer.data.PlaylistEdit
 import com.maukingdom.musicplayer.data.PlaylistEntity
 import com.maukingdom.musicplayer.ui.v2.home.songCountLabel
 import com.maukingdom.musicplayer.ui.v2.library.playlistMetaText
+import com.maukingdom.musicplayer.ui.v2.queue.QueueUndo
 
 /** Pure rules for the "Add to playlist" / "Move to playlist" sheet. JVM-tested. */
 
@@ -46,6 +47,9 @@ data class PickerRow(
 
 /** Snackbar text and, when anything changed, the edit to undo. */
 data class PlaylistEditResult(val message: String, val edit: PlaylistEdit?)
+
+/** Snackbar text for Play next / Add to queue and, when it can be undone, the undo. */
+data class QueueEditResult(val message: String, val undo: QueueUndo?)
 
 /** Songs a "Select files" import added, offered for a playlist. */
 @Immutable

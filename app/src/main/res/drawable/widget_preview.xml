@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker preview for Android 11 and earlier (12+ uses previewLayout). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp"
+    android:height="64dp"
+    android:viewportWidth="250"
+    android:viewportHeight="64">
+    <!-- Body with hairline. -->
+    <path
+        android:fillColor="#FF0E0F11"
+        android:strokeColor="#1FFFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M16,0.5h218a15.5,15.5 0,0 1,15.5 15.5v32a15.5,15.5 0,0 1,-15.5 15.5h-218a15.5,15.5 0,0 1,-15.5 -15.5v-32a15.5,15.5 0,0 1,15.5 -15.5z" />
+    <!-- Cover. -->
+    <path
+        android:fillColor="#FF1C1C22"
+        android:pathData="M16,8h32a8,8 0,0 1,8 8v32a8,8 0,0 1,-8 8h-32a8,8 0,0 1,-8 -8v-32a8,8 0,0 1,8 -8z" />
+    <path
+        android:fillColor="#99FFFFFF"
+        android:pathData="M33,20v13.2c-0.6,-0.3 -1.2,-0.5 -2,-0.5c-2.2,0 -4,1.8 -4,4s1.8,4 4,4 4,-1.8 4,-4V24h4v-4h-6z" />
+    <!-- Title and artist. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M68,22h70a3,3 0,0 1,0 6h-70a3,3 0,0 1,0 -6z" />
+    <path
+        android:fillColor="#A3FFFFFF"
+        android:pathData="M68,36h50a2.5,2.5 0,0 1,0 5h-50a2.5,2.5 0,0 1,0 -5z" />
+    <!-- Previous. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M162,26h2v12h-2zM165.5,32l8.5,6V26z" />
+    <!-- Play: accent disc. -->
+    <path
+        android:fillColor="#FFFF8A3D"
+        android:pathData="M198,32m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" />
+    <path
+        android:fillColor="#FF1A0A00"
+        android:pathData="M194,25v14l11,-7z" />
+    <!-- Next. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M222,38l8.5,-6L222,26v12zM232,26v12h2V26h-2z" />
+</vector>

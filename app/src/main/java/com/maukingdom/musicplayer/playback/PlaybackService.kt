@@ -1,6 +1,11 @@
 package com.maukingdom.musicplayer.playback
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.pm.ServiceInfo
+import android.graphics.BitmapFactory
+import android.os.Build
 import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
@@ -29,6 +34,7 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaLibraryService.LibraryParams
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
+import androidx.media3.session.CommandButton
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
@@ -38,9 +44,16 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import com.maukingdom.musicplayer.MainActivity
 import com.maukingdom.musicplayer.R
+import com.maukingdom.musicplayer.playback.widget.PlayerWidget
+import com.maukingdom.musicplayer.playback.widget.WidgetModel
+import com.maukingdom.musicplayer.playback.widget.WidgetState
+import com.maukingdom.musicplayer.ui.decodeWithinBounds
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.maukingdom.musicplayer.data.MusicDatabase
 import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaybackPreferences
+import com.maukingdom.musicplayer.data.FavouritesStore
 import com.maukingdom.musicplayer.data.PlaybackSnapshot
 import com.maukingdom.musicplayer.playback.visualiser.BandSmoother
 import com.maukingdom.musicplayer.playback.visualiser.SpectrumAudioProcessor
@@ -59,7 +72,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -82,6 +97,8 @@ class PlaybackService : MediaLibraryService() {
     companion object {
         private const val TAG = "PlaybackService"
         private const val CHECKPOINT_INTERVAL_MS = 5_000L
+        private const val WIDGET_CHANNEL_ID = "widget"
+        private const val WIDGET_NOTIFICATION_ID = 7_301
 
         private const val NOTHING_RESOLVED =
             "None of the requested songs are in the library."
@@ -95,6 +112,26 @@ class PlaybackService : MediaLibraryService() {
          */
         const val ACTION_CLEAR_QUEUE =
             "com.maukingdom.musicplayer.action.CLEAR_QUEUE"
+
+        /**
+         * Sets the sleep timer. Argument [EXTRA_SLEEP_ARG]: minutes, or
+         * SleepTimerMath.ARG_END_OF_SONG / ARG_OFF. This app's UID only.
+         */
+        const val ACTION_SET_SLEEP_TIMER =
+            "com.maukingdom.musicplayer.action.SET_SLEEP_TIMER"
+        const val EXTRA_SLEEP_ARG = "sleep_arg"
+
+        /**
+         * Adds or removes the current song from Favourites. Available to every
+         * controller (it backs the heart button on the Android Auto player).
+         */
+        const val ACTION_TOGGLE_FAVOURITE =
+            "com.maukingdom.musicplayer.action.TOGGLE_FAVOURITE"
+
+        private val mutableSleepTimer = MutableStateFlow<SleepTimerState>(SleepTimerState.Off)
+
+        /** The running sleep timer, for the UI. In-process only. */
+        val sleepTimer: StateFlow<SleepTimerState> = mutableSleepTimer.asStateFlow()
 
         private val mutableRecoveryNotice = MutableStateFlow<String?>(null)
 
@@ -123,6 +160,7 @@ class PlaybackService : MediaLibraryService() {
     private var equalizer: Equalizer? = null
     private var toneBassDb = 0
     private var toneTrebleDb = 0
+    private var tonePreset = EqPreset.FLAT
 
     private val toneListener = object : Player.Listener {
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
@@ -254,6 +292,44 @@ class PlaybackService : MediaLibraryService() {
         Bundle.EMPTY
     )
 
+    private val sleepTimerCommand = SessionCommand(
+        ACTION_SET_SLEEP_TIMER,
+        Bundle.EMPTY
+    )
+
+    private var sleepTimer: SleepTimerController? = null
+
+    private val favouriteCommand = SessionCommand(
+        ACTION_TOGGLE_FAVOURITE,
+        Bundle.EMPTY
+    )
+
+    private lateinit var favourites: FavouritesStore
+
+    /** The current item's media id, for the heart button. Main thread. */
+    private val currentMediaId = MutableStateFlow<String?>(null)
+
+    // Home-screen widget. Main thread.
+    /** The song whose cover the widget should show. */
+    private val widgetSongId = MutableStateFlow<String?>(null)
+    /** A widget play tap that arrived while the saved queue was still loading. */
+    private var widgetPlayPending = false
+
+    /** Pushes title / artist / play state to the widget on real changes only (never position ticks). */
+    private val widgetListener = object : Player.Listener {
+        override fun onEvents(player: Player, events: Player.Events) {
+            if (events.containsAny(
+                    Player.EVENT_MEDIA_METADATA_CHANGED,
+                    Player.EVENT_IS_PLAYING_CHANGED,
+                    Player.EVENT_MEDIA_ITEM_TRANSITION,
+                    Player.EVENT_TIMELINE_CHANGED
+                )
+            ) {
+                pushWidget()
+            }
+        }
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             if (restorationInProgress) {
@@ -274,6 +350,7 @@ class PlaybackService : MediaLibraryService() {
                 preserveSavedSnapshot = false
             }
 
+            currentMediaId.value = player.currentMediaItem?.mediaId
             enqueueSnapshot()
         }
     }
@@ -291,17 +368,20 @@ class PlaybackService : MediaLibraryService() {
              * Continue accepting external media controllers with the default
              * commands (for a library session these include the browse
              * commands). The destructive custom command is available only to
-             * controllers under this application's UID.
+             * controllers under this application's UID. Every controller may
+             * use the Favourites heart.
              */
-            if (controller.uid == Process.myUid()) {
-                val commands =
-                    MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
-                        .buildUpon()
-                        .add(clearQueueCommand)
-                        .build()
+            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
+                .buildUpon()
+                .add(favouriteCommand)
 
-                builder.setAvailableSessionCommands(commands)
+            if (controller.uid == Process.myUid()) {
+                commands.add(clearQueueCommand)
+                commands.add(sleepTimerCommand)
             }
+
+            builder.setAvailableSessionCommands(commands.build())
+            builder.setMediaButtonPreferences(heartButtons)
 
             return builder.build()
         }
@@ -312,7 +392,21 @@ class PlaybackService : MediaLibraryService() {
             customCommand: SessionCommand,
             args: Bundle
         ): ListenableFuture<SessionResult> {
-            if (customCommand.customAction != ACTION_CLEAR_QUEUE) {
+            if (customCommand.customAction == ACTION_TOGGLE_FAVOURITE) {
+                if (destroyed) {
+                    return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                }
+                val songId = player.currentMediaItem?.mediaId
+                    ?: return completedResult(SessionResult.RESULT_ERROR_BAD_VALUE)
+                return ioFuture {
+                    favourites.toggle(songId)
+                    SessionResult(SessionResult.RESULT_SUCCESS)
+                }
+            }
+
+            if (customCommand.customAction != ACTION_CLEAR_QUEUE &&
+                customCommand.customAction != ACTION_SET_SLEEP_TIMER
+            ) {
                 return completedResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED)
             }
 
@@ -326,6 +420,13 @@ class PlaybackService : MediaLibraryService() {
 
             if (destroyed) {
                 return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+            }
+
+            if (customCommand.customAction == ACTION_SET_SLEEP_TIMER) {
+                val timer = sleepTimer
+                    ?: return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                timer.set(args.getInt(EXTRA_SLEEP_ARG, SleepTimerMath.ARG_OFF))
+                return completedResult(SessionResult.RESULT_SUCCESS)
             }
 
             return clearQueueExplicitly()
@@ -592,16 +693,33 @@ class PlaybackService : MediaLibraryService() {
         attachEqualizer(player.audioSessionId)
 
         player.addListener(visualiserListener)
+
+        favourites = FavouritesStore(repository, preferences)
+
+        val timer = SleepTimerController(mainScope, player)
+        sleepTimer = timer
+        player.addListener(timer.listener)
+        mainScope.launch { timer.state.collect { mutableSleepTimer.value = it } }
+
+        player.addListener(widgetListener)
+        // Covers are decoded off the main thread, at most 256 px, once per song.
+        mainScope.launch {
+            widgetSongId.collectLatest { songId ->
+                val cover = if (songId == null) null else withContext(Dispatchers.IO) { loadWidgetCover(songId) }
+                PlayerWidget.update(this@PlaybackService, PlayerWidget.state, cover, songId)
+            }
+        }
         VisualiserBus.timeline.onPlayingChanged(player.isPlaying, System.nanoTime())
         startVisualiserPublisher()
 
         mainScope.launch {
             preferences.appPreferences
-                .map { it.bassDb to it.trebleDb }
+                .map { Triple(it.bassDb, it.trebleDb, EqPreset.fromId(it.eqPresetId)) }
                 .distinctUntilChanged()
-                .collect { (bass, treble) ->
+                .collect { (bass, treble, preset) ->
                     toneBassDb = bass
                     toneTrebleDb = treble
+                    tonePreset = preset
 
                     // After a failure, a knob change tries attaching again.
                     if (equalizer == null) {
@@ -637,6 +755,18 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
         restorePlayback()
+
+        // The heart on Android Auto's player (and the media notification) follows the current song.
+        mainScope.launch {
+            combine(favourites.songIds, currentMediaId) { favouriteIds, songId ->
+                songId?.let { it in favouriteIds }
+            }
+                .distinctUntilChanged()
+                .collect { isFavourite ->
+                    heartButtons = heartButtonsFor(isFavourite)
+                    mediaSession?.setMediaButtonPreferences(heartButtons)
+                }
+        }
 
         mainScope.launch {
             while (isActive) {
@@ -722,14 +852,15 @@ class PlaybackService : MediaLibraryService() {
                 minMb = range[0].toInt(),
                 maxMb = range[1].toInt(),
                 bassDb = toneBassDb,
-                trebleDb = toneTrebleDb
+                trebleDb = toneTrebleDb,
+                preset = tonePreset
             )
 
             levels.forEachIndexed { band, level ->
                 eq.setBandLevel(band.toShort(), level.toShort())
             }
 
-            val status = eq.setEnabled(ToneControl.isActive(toneBassDb, toneTrebleDb))
+            val status = eq.setEnabled(ToneControl.isActive(toneBassDb, toneTrebleDb, tonePreset))
             check(status == AudioEffect.SUCCESS) { "Equalizer setEnabled returned $status." }
 
             mutableToneControlAvailable.value = true
@@ -860,6 +991,18 @@ class PlaybackService : MediaLibraryService() {
                 page,
                 pageSize
             ).map { song -> songItem(BrowseId.LibrarySong(song.id), song) }
+
+            BrowseId.Favourites -> {
+                // Played as its playlist, so the whole Favourites list is queued.
+                val playlistId = favourites.playlistId.first()
+                if (playlistId == null) {
+                    emptyList()
+                } else {
+                    BrowseTree.page(repository.getPlaylistSongs(playlistId), page, pageSize).map { song ->
+                        songItem(BrowseId.PlaylistSong(playlistId, song.id), song)
+                    }
+                }
+            }
         }
     }
 
@@ -966,10 +1109,27 @@ class PlaybackService : MediaLibraryService() {
             is BrowseId.Playlist -> repository.getPlaylistSongs(id.playlistId)
             BrowseId.Recent -> repository.getRecentSongs(BrowseTree.RECENT_LIMIT)
             BrowseId.Library -> repository.getAllSongs()
+            BrowseId.Favourites -> favourites.playlistId.first()?.let { repository.getPlaylistSongs(it) }.orEmpty()
             BrowseId.Root, BrowseId.Playlists, null -> emptyList()
         }
 
         return songs.map { MediaItemMapper.fromSong(it) }
+    }
+
+    /** Main thread. What the heart button currently shows. */
+    private var heartButtons: List<CommandButton> = emptyList()
+
+    /** One heart for [isFavourite]; none while nothing is playing (null). */
+    private fun heartButtonsFor(isFavourite: Boolean?): List<CommandButton> {
+        if (isFavourite == null) return emptyList()
+        return listOf(
+            CommandButton.Builder(
+                if (isFavourite) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED
+            )
+                .setSessionCommand(favouriteCommand)
+                .setDisplayName(if (isFavourite) "Remove from Favourites" else "Add to Favourites")
+                .build()
+        )
     }
 
     private fun nodeItem(
@@ -1345,7 +1505,146 @@ class PlaybackService : MediaLibraryService() {
                     restorationInProgress = false
                 }
             }
+
+            if (!destroyed) onRestorationFinished()
         }
+    }
+
+    /** After the saved queue is loaded (or not): a widget play tap waiting for it, and the widget itself. */
+    private fun onRestorationFinished() {
+        pushWidget()
+        if (!widgetPlayPending) return
+        widgetPlayPending = false
+        startFromWidget(foreground = false)
+    }
+
+    // Home-screen widget
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            PlayerWidget.ACTION_PLAY_PAUSE,
+            PlayerWidget.ACTION_NEXT,
+            PlayerWidget.ACTION_PREVIOUS -> handleWidgetAction(intent)
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun handleWidgetAction(intent: Intent) {
+        val foreground = intent.getBooleanExtra(PlayerWidget.EXTRA_FOREGROUND, false)
+
+        when (intent.action) {
+            PlayerWidget.ACTION_PLAY_PAUSE -> when {
+                restorationInProgress -> {
+                    // Cold start from the widget: meet the foreground start now
+                    // (loading can take a while), and play once the queue is back.
+                    widgetPlayPending = true
+                    if (foreground) meetForegroundStart(R.string.widget_starting)
+                }
+                player.isPlaying -> {
+                    player.pause()
+                    if (foreground) meetForegroundStart()
+                }
+                else -> startFromWidget(foreground)
+            }
+
+            PlayerWidget.ACTION_NEXT -> {
+                if (player.mediaItemCount > 0) player.seekToNextMediaItem()
+                if (foreground) meetForegroundStart()
+            }
+
+            PlayerWidget.ACTION_PREVIOUS -> {
+                if (player.mediaItemCount > 0) player.seekToPreviousMediaItem()
+                if (foreground) meetForegroundStart()
+            }
+        }
+    }
+
+    /**
+     * Plays the queue. Started with startForegroundService, the service must
+     * become foreground: Media3 does that once playback starts; if nothing
+     * can play (or it has not within 4 s on Android 10+), a brief notice
+     * meets the obligation instead of letting Android stop the app.
+     */
+    private fun startFromWidget(foreground: Boolean) {
+        if (player.mediaItemCount == 0) {
+            if (foreground) meetForegroundStart()
+            return
+        }
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        player.play()
+
+        if (foreground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            mainScope.launch {
+                delay(4_000L)
+                if (!destroyed && foregroundServiceType == ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE) meetForegroundStart()
+            }
+        }
+    }
+
+    /** Becomes foreground for a moment with a quiet notice, then drops it. */
+    private fun meetForegroundStart(textRes: Int = R.string.widget_nothing_to_play) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            foregroundServiceType != ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
+        ) {
+            return
+        }
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(WIDGET_CHANNEL_ID, "Home-screen widget", NotificationManager.IMPORTANCE_LOW)
+            )
+            val notice = NotificationCompat.Builder(this, WIDGET_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_music)
+                .setContentText(getString(textRes))
+                .setSilent(true)
+                .build()
+            ServiceCompat.startForeground(
+                this,
+                WIDGET_NOTIFICATION_ID,
+                notice,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0
+            )
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not meet the widget's foreground start.", error)
+        }
+    }
+
+    /** Main thread. The widget's text and button state from the player. */
+    private fun pushWidget() {
+        if (destroyed) return
+        val item = player.currentMediaItem
+        val songId = item?.mediaId?.takeIf { player.mediaItemCount > 0 }
+        val metadata = player.mediaMetadata
+        val next = WidgetState(
+            hasSong = songId != null,
+            songId = songId,
+            title = metadata.title?.toString().orEmpty(),
+            artist = metadata.artist?.toString().orEmpty(),
+            isPlaying = player.isPlaying
+        )
+        PlayerWidget.update(this, next)
+        widgetSongId.value = songId
+    }
+
+    /** Runs on Dispatchers.IO. The song's cover, rounded, at most 256 px; null if it has none. */
+    private fun loadWidgetCover(songId: String): android.graphics.Bitmap? = try {
+        val uri = Uri.parse(ArtworkPaths.songUri(songId))
+        val decoded = decodeWithinBounds(
+            open = { contentResolver.openInputStream(uri) },
+            readSize = { stream ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(stream, null, bounds)
+                bounds.outWidth to bounds.outHeight
+            },
+            decode = { stream, sample ->
+                BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+            },
+            maxPx = WidgetModel.COVER_MAX_PX
+        )
+        decoded?.let { bitmap -> PlayerWidget.roundedCover(bitmap).also { if (it !== bitmap) bitmap.recycle() } }
+    } catch (error: Exception) {
+        null
     }
 
     /**
@@ -1559,6 +1858,15 @@ class PlaybackService : MediaLibraryService() {
         }
 
         destroyed = true
+        // Restores the volume if a fade was running.
+        sleepTimer?.let { timer ->
+            timer.release()
+            player.removeListener(timer.listener)
+        }
+        sleepTimer = null
+        mutableSleepTimer.value = SleepTimerState.Off
+        player.removeListener(widgetListener)
+        PlayerWidget.update(this, PlayerWidget.state.copy(isPlaying = false))
         mainScope.cancel()
 
         player.removeListener(playerListener)

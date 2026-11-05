@@ -52,6 +52,13 @@ internal object SnapshotCompat {
  * playback layer is responsible for validating any saved traversal order
  * against the queue it can restore.
  */
+/** The saved queue origin: source playlist (null = library), edited flag, queue fingerprint. */
+data class QueueOriginRecord(
+    val playlistId: Long?,
+    val edited: Boolean,
+    val fingerprint: Int
+)
+
 data class PlaybackSnapshot(
     val queueSongIds: List<String> = emptyList(),
     val selectedIndex: Int = 0,
@@ -77,7 +84,9 @@ data class AppPreferences(
     /** Stored layout ID ("classic"/"modern"); null means Classic. */
     val appLayoutId: String? = null,
     /** Modern only: tint the Studio player with the cover's colour instead of the skin's. */
-    val useCoverColour: Boolean = true
+    val useCoverColour: Boolean = true,
+    /** Equaliser preset id (see EqPreset); null means Flat. */
+    val eqPresetId: String? = null
 )
 
 /**
@@ -105,6 +114,11 @@ class PlaybackPreferences(context: Context) {
         val trebleDb = intPreferencesKey("tone_treble_db")
         val appLayout = stringPreferencesKey("app_layout")
         val modernUseCoverColour = booleanPreferencesKey("modern_use_cover_colour")
+        val queueOriginPlaylistId = longPreferencesKey("queue_origin_playlist_id")
+        val queueOriginEdited = booleanPreferencesKey("queue_origin_edited")
+        val queueOriginFingerprint = intPreferencesKey("queue_origin_fingerprint")
+        val favouritesPlaylistId = longPreferencesKey("favourites_playlist_id")
+        val eqPreset = stringPreferencesKey("eq_preset")
     }
 
     private val preferences: Flow<Preferences> = dataStore.data.catch { error ->
@@ -153,7 +167,8 @@ class PlaybackPreferences(context: Context) {
             bassDb = (values[Keys.bassDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
             trebleDb = (values[Keys.trebleDb] ?: 0).coerceIn(TONE_MIN_DB, TONE_MAX_DB),
             appLayoutId = values[Keys.appLayout],
-            useCoverColour = values[Keys.modernUseCoverColour] ?: true
+            useCoverColour = values[Keys.modernUseCoverColour] ?: true,
+            eqPresetId = values[Keys.eqPreset]
         )
     }
 
@@ -200,6 +215,32 @@ class PlaybackPreferences(context: Context) {
             values[Keys.positionMs] = snapshot.positionMs.coerceAtLeast(0L)
             values[Keys.shuffleEnabled] = snapshot.shuffleEnabled
             values[Keys.repeatMode] = safeRepeatMode
+        }
+    }
+
+    /** The saved Favourites playlist id; it may point at a playlist the user deleted. */
+    val favouritesPlaylistId: Flow<Long?> = preferences.map { it[Keys.favouritesPlaylistId] }
+
+    suspend fun saveFavouritesPlaylistId(playlistId: Long) {
+        dataStore.edit { values -> values[Keys.favouritesPlaylistId] = playlistId }
+    }
+
+    /** Where this app last set the queue from (Modern caption / Continue listening); null if never. */
+    suspend fun getQueueOrigin(): QueueOriginRecord? {
+        val values = preferences.first()
+        val fingerprint = values[Keys.queueOriginFingerprint] ?: return null
+        return QueueOriginRecord(
+            playlistId = values[Keys.queueOriginPlaylistId]?.takeIf { it >= 0L },
+            edited = values[Keys.queueOriginEdited] ?: false,
+            fingerprint = fingerprint
+        )
+    }
+
+    suspend fun saveQueueOrigin(origin: QueueOriginRecord) {
+        dataStore.edit { values ->
+            values[Keys.queueOriginPlaylistId] = origin.playlistId ?: -1L
+            values[Keys.queueOriginEdited] = origin.edited
+            values[Keys.queueOriginFingerprint] = origin.fingerprint
         }
     }
 
@@ -258,6 +299,19 @@ class PlaybackPreferences(context: Context) {
     suspend fun setBassDb(db: Int) {
         dataStore.edit { values ->
             values[Keys.bassDb] = db.coerceIn(TONE_MIN_DB, TONE_MAX_DB)
+        }
+    }
+
+    suspend fun setEqPreset(id: String) {
+        dataStore.edit { values -> values[Keys.eqPreset] = id }
+    }
+
+    /** "Reset": Flat with bass and treble at 0, in one write. */
+    suspend fun resetTone(flatId: String) {
+        dataStore.edit { values ->
+            values[Keys.eqPreset] = flatId
+            values[Keys.bassDb] = 0
+            values[Keys.trebleDb] = 0
         }
     }
 

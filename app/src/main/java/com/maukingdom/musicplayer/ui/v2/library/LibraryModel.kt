@@ -70,7 +70,9 @@ data class PlaylistItem(
     val name: String,
     val songCount: Int,
     val isFolder: Boolean,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    /** The Favourites playlist: a heart badge instead of the folder mark. */
+    val isFavourites: Boolean = false
 )
 
 /** One artist or album row: its songs in play order. [key] is stable and case-insensitive. */
@@ -93,7 +95,8 @@ fun playlistItems(
     songCounts: Map<Long, Int>,
     folderPlaylistIds: Set<Long>,
     foldersOnly: Boolean,
-    sort: LibrarySort
+    sort: LibrarySort,
+    favouritesId: Long? = null
 ): List<PlaylistItem> {
     val items = playlists
         .filter { !foldersOnly || it.id in folderPlaylistIds }
@@ -103,7 +106,8 @@ fun playlistItems(
                 name = it.name,
                 songCount = songCounts[it.id] ?: 0,
                 isFolder = it.id in folderPlaylistIds,
-                createdAtMs = it.createdAtMs
+                createdAtMs = it.createdAtMs,
+                isFavourites = it.id == favouritesId
             )
         }
 

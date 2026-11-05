@@ -148,6 +148,15 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlaylistSong(entry: PlaylistSongEntity): Long
 
+    @Query(
+        """
+        SELECT COALESCE(MIN(position), 0)
+        FROM playlist_songs
+        WHERE playlistId = :playlistId
+        """
+    )
+    suspend fun getFirstPlaylistPosition(playlistId: Long): Long
+
     /** Read-only: ids of the playlists that hold [songId]. */
     @Query("SELECT playlistId FROM playlist_songs WHERE songId = :songId")
     fun observePlaylistIdsContaining(songId: String): Flow<List<Long>>

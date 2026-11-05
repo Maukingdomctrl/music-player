@@ -152,7 +152,7 @@ private val SessionSaver = Saver<PickerSession?, ArrayList<Any>>(
 )
 
 /**
- * Provides [LocalPlaylistPicker] to [content] and owns the sheet, its
+ * Provides [LocalPlaylistPicker] and [LocalSongQueue] to [content] and owns the sheet, its
  * dialogs and the result snackbar (drawn over [content], [snackbarBottomPadding]
  * above the bottom edge). Also offers a "Select files" import's songs.
  */
@@ -165,11 +165,30 @@ fun PlaylistPickerHost(
 ) {
     var session by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf<PickerSession?>(null) }
     val picker = remember { PlaylistPicker { request -> session = PickerSession(request) } }
+    val songQueue = remember(musicViewModel) { SongQueue(musicViewModel::playNext, musicViewModel::addToQueue) }
+    val favouriteIds = musicViewModel.favouriteSongIds.collectAsStateWithLifecycle()
+    val favourites = remember(musicViewModel, favouriteIds) {
+        FavouriteActions(favouriteIds, musicViewModel::addToFavourites, musicViewModel::removeFromFavourites)
+    }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(musicViewModel) {
         musicViewModel.playlistEditResults.collect { result ->
             launch { showEditSnackbar(snackbar, result, musicViewModel::undoPlaylistEdit) }
+        }
+    }
+
+    LaunchedEffect(musicViewModel) {
+        musicViewModel.queueEditResults.collect { result ->
+            launch {
+                val undo = result.undo
+                val choice = snackbar.showSnackbar(
+                    message = result.message,
+                    actionLabel = if (undo != null) "Undo" else null,
+                    duration = SnackbarDuration.Short
+                )
+                if (choice == SnackbarResult.ActionPerformed && undo != null) musicViewModel.undoQueueEdit(undo)
+            }
         }
     }
 
@@ -189,7 +208,11 @@ fun PlaylistPickerHost(
         }
     }
 
-    CompositionLocalProvider(LocalPlaylistPicker provides picker) {
+    CompositionLocalProvider(
+        LocalPlaylistPicker provides picker,
+        LocalSongQueue provides songQueue,
+        LocalFavourites provides favourites
+    ) {
         Box(modifier = modifier.fillMaxSize()) {
             content()
 

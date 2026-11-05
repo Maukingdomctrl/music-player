@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Home-screen widget: piano black like the app icon, accent play button. -->
+    <color name="widget_piano_black">#FF0E0F11</color>
+    <color name="widget_hairline">#1FFFFFFF</color>
+    <color name="widget_cover_well">#FF1C1C22</color>
+    <color name="widget_text_primary">#FFFFFFFF</color>
+    <color name="widget_text_secondary">#A3FFFFFF</color>
+    <color name="widget_accent">#FFFF8A3D</color>
+
+    <dimen name="widget_radius">16dp</dimen>
+
+    <string name="widget_name">MyCar Music</string>
+    <string name="widget_description">Now playing with previous, play/pause and next. Resize from 4×1 to 4×2.</string>
+    <string name="widget_empty">Tap to start MyCar Music</string>
+    <string name="widget_preview_title">MyCar Music</string>
+    <string name="widget_preview_artist">Your music, on the road</string>
+    <string name="widget_cd_cover">Open MyCar Music</string>
+    <string name="widget_cd_previous">Previous song</string>
+    <string name="widget_cd_play">Play</string>
+    <string name="widget_cd_pause">Pause</string>
+    <string name="widget_cd_next">Next song</string>
+    <string name="widget_starting">Starting MyCar Music…</string>
+    <string name="widget_nothing_to_play">Nothing to play yet. Open MyCar Music to choose a song.</string>
+</resources>

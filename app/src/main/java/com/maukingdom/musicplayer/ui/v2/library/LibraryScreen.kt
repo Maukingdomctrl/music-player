@@ -30,8 +30,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.Sort
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -75,6 +77,12 @@ import com.maukingdom.musicplayer.ui.v2.ModernDimens
 import com.maukingdom.musicplayer.ui.v2.ModernMotion
 import com.maukingdom.musicplayer.ui.v2.modernTween
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.AddToPlaylistMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.FavouriteMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalFavourites
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenu
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.SongMenuItem
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalSongQueue
+import com.maukingdom.musicplayer.ui.v2.playlistpicker.QueueMenuItems
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.LocalPlaylistPicker
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionCheck
 import com.maukingdom.musicplayer.ui.v2.playlistpicker.SelectionTopBar
@@ -144,7 +152,8 @@ fun LibraryRoute(
     val sort = remember(filter, sortsEncoded) { validSort(filter, decodeSorts(sortsEncoded)[filter]) }
 
     val pickers = rememberLibraryPickers(musicViewModel)
-    val rows = rememberLibraryRows(filter, sort, playlists, counts, folderIds, songs)
+    val favouritesId by musicViewModel.favouritesPlaylistId.collectAsStateWithLifecycle()
+    val rows = rememberLibraryRows(filter, sort, playlists, counts, folderIds, songs, favouritesId)
 
     // A sync that lost its folder is shown on its row, so the banner skips it there.
     val inlineFailure = inlineFolderFailure(folderOperation)
@@ -211,11 +220,12 @@ private fun rememberLibraryRows(
     playlists: List<PlaylistEntity>,
     counts: Map<Long, Int>,
     folderIds: Set<Long>,
-    songs: List<SongEntity>
+    songs: List<SongEntity>,
+    favouritesId: Long?
 ): LibraryRows? {
     fun build(): LibraryRows = when (filter) {
-        LibraryFilter.PLAYLISTS -> LibraryRows.Playlists(playlistItems(playlists, counts, folderIds, false, sort))
-        LibraryFilter.FOLDERS -> LibraryRows.Playlists(playlistItems(playlists, counts, folderIds, true, sort))
+        LibraryFilter.PLAYLISTS -> LibraryRows.Playlists(playlistItems(playlists, counts, folderIds, false, sort, favouritesId))
+        LibraryFilter.FOLDERS -> LibraryRows.Playlists(playlistItems(playlists, counts, folderIds, true, sort, favouritesId))
         LibraryFilter.SONGS -> LibraryRows.Songs(sortSongs(songs, sort))
         LibraryFilter.ARTISTS -> LibraryRows.Groups(groupByArtist(songs, sort), albums = false)
         LibraryFilter.ALBUMS -> LibraryRows.Groups(groupByAlbum(songs, sort), albums = true)
@@ -227,7 +237,7 @@ private fun rememberLibraryRows(
             value = withContext(Dispatchers.Default) { build() }
         }.value
     } else {
-        remember(filter, sort, playlists, counts, folderIds, songs) { build() }
+        remember(filter, sort, playlists, counts, folderIds, songs, favouritesId) { build() }
     }
 }
 
@@ -254,6 +264,8 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val picker = LocalPlaylistPicker.current
+    val songQueue = LocalSongQueue.current
+    val favourites = LocalFavourites.current
     // Multi-select, for the Songs list only.
     val selection = rememberSongSelection()
     val listedIds = remember(rows) { (rows as? LibraryRows.Songs)?.songs?.map { it.id } }
@@ -325,6 +337,8 @@ fun LibraryScreen(
                                 SelectionCheck(selected = selected)
                             } else {
                                 SongMenuButton(songTitle = song.title) { close ->
+                                    QueueMenuItems(songId = song.id, close = close)
+                                    FavouriteMenuItem(songId = song.id, close = close)
                                     AddToPlaylistMenuItem(songId = song.id, close = close)
                                 }
                             }
@@ -366,14 +380,40 @@ fun LibraryScreen(
                 onClose = selection::clear,
                 onSelectAll = { selection.selectAll(listedIds.orEmpty()) }
             ) {
+                fun selected() = selectionInListOrder(listedIds.orEmpty(), selection.selected.orEmpty())
                 V2IconButton(
                     icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
                     contentDescription = "Add to playlist",
                     onClick = {
-                        picker.add(selectionInListOrder(listedIds.orEmpty(), selection.selected.orEmpty()))
+                        picker.add(selected())
                         selection.clear()
                     }
                 )
+                V2IconButton(
+                    icon = Icons.Outlined.FavoriteBorder,
+                    contentDescription = "Add to Favourites",
+                    onClick = {
+                        favourites.add(selected())
+                        selection.clear()
+                    }
+                )
+                // Queue actions in an overflow, so "N selected" keeps room at 384 dp and 1.3x text.
+                Box {
+                    var more by remember { mutableStateOf(false) }
+                    V2IconButton(icon = Icons.Outlined.MoreVert, contentDescription = "More actions", onClick = { more = true })
+                    SongMenu(expanded = more, onDismiss = { more = false }) { close ->
+                        SongMenuItem("Play next") {
+                            close()
+                            songQueue.playNext(selected())
+                            selection.clear()
+                        }
+                        SongMenuItem("Add to queue") {
+                            close()
+                            songQueue.addToQueue(selected())
+                            selection.clear()
+                        }
+                    }
+                }
             }
         }
     }
@@ -531,10 +571,10 @@ private fun PlaylistRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 } else {
-                    if (item.isFolder) {
+                    if (item.isFavourites || item.isFolder) {
                         Icon(
-                            imageVector = Icons.Filled.Folder,
-                            contentDescription = "SD-card folder",
+                            imageVector = if (item.isFavourites) Icons.Filled.Favorite else Icons.Filled.Folder,
+                            contentDescription = if (item.isFavourites) "Favourites" else "SD-card folder",
                             tint = colors.accent,
                             modifier = Modifier.size(13.dp)
                         )

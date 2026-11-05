@@ -19,8 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
-import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.ColumnScope
+import com.maukingdom.musicplayer.ui.v2.queue.playingFromCaption
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -116,8 +117,8 @@ fun NowPlayingSheet(
     onChangeSkin: () -> Unit,
     onClearQueue: () -> Unit,
     tintProvider: () -> Color,
-    onAddToPlaylist: (() -> Unit)? = null,
-    onMoveToPlaylist: (() -> Unit)? = null,
+    queueEdited: Boolean = false,
+    songMenuItems: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
@@ -156,8 +157,8 @@ fun NowPlayingSheet(
                     onClose = onClose,
                     onChangeSkin = onChangeSkin,
                     onClearQueue = onClearQueue,
-                    onAddToPlaylist = onAddToPlaylist,
-                    onMoveToPlaylist = onMoveToPlaylist,
+                    queueEdited = queueEdited,
+                    songMenuItems = songMenuItems,
                     modifier = Modifier.draggable(
                         state = dragState,
                         orientation = Orientation.Vertical,
@@ -187,12 +188,13 @@ private fun SheetHeader(
     onClose: () -> Unit,
     onChangeSkin: () -> Unit,
     onClearQueue: () -> Unit,
-    onAddToPlaylist: (() -> Unit)?,
-    onMoveToPlaylist: (() -> Unit)?,
+    queueEdited: Boolean,
+    songMenuItems: (@Composable ColumnScope.(close: () -> Unit) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     val colors = Modern.colors
     var menuOpen by remember { mutableStateOf(false) }
+    val (eyebrow, source) = playingFromCaption(playlistName, queueEdited)
 
     Row(
         modifier = modifier
@@ -214,15 +216,15 @@ private fun SheetHeader(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                // "Playlist" only when it really is one, not the whole library.
-                text = if (playlistName != null) "PLAYING FROM PLAYLIST" else "PLAYING FROM",
+                // "Playlist" only when it really is one; "Queue" once the user changed it.
+                text = eyebrow,
                 style = Modern.type.sheetEyebrow,
                 color = colors.textSecondary,
                 maxLines = 1,
                 textAlign = TextAlign.Center
             )
             Text(
-                text = playlistName ?: "YOUR LIBRARY",
+                text = source,
                 style = Modern.type.sheetTitle,
                 color = colors.textPrimary,
                 maxLines = 1,
@@ -243,30 +245,7 @@ private fun SheetHeader(
                 onDismissRequest = { menuOpen = false },
                 containerColor = colors.surfaceHigh
             ) {
-                if (onAddToPlaylist != null) {
-                    DropdownMenuItem(
-                        text = { Text("Add to playlist…", style = Modern.type.menuItem, color = colors.textPrimary) },
-                        leadingIcon = {
-                            Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null, tint = colors.textSecondary)
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onAddToPlaylist()
-                        }
-                    )
-                }
-                if (onMoveToPlaylist != null) {
-                    DropdownMenuItem(
-                        text = { Text("Move to another playlist…", style = Modern.type.menuItem, color = colors.textPrimary) },
-                        leadingIcon = {
-                            Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = null, tint = colors.textSecondary)
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onMoveToPlaylist()
-                        }
-                    )
-                }
+                songMenuItems?.invoke(this) { menuOpen = false }
                 DropdownMenuItem(
                     text = { Text("Change skin", style = Modern.type.menuItem, color = colors.textPrimary) },
                     leadingIcon = {
@@ -291,4 +270,16 @@ private fun SheetHeader(
             }
         }
     }
+}
+
+/** One item of the Now Playing ⋮ menu, for [NowPlayingSheet]'s songMenuItems slot. */
+@Composable
+fun NowPlayingMenuItem(label: String, icon: ImageVector, onClick: () -> Unit, enabled: Boolean = true) {
+    val colors = Modern.colors
+    DropdownMenuItem(
+        text = { Text(label, style = Modern.type.menuItem, color = if (enabled) colors.textPrimary else colors.textPrimary.copy(alpha = 0.5f)) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = colors.textSecondary) },
+        enabled = enabled,
+        onClick = onClick
+    )
 }
