@@ -394,10 +394,10 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<SessionResult> {
             if (customCommand.customAction == ACTION_TOGGLE_FAVOURITE) {
                 if (destroyed) {
-                    return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                    return completedResult(SessionError.ERROR_SESSION_DISCONNECTED)
                 }
                 val songId = player.currentMediaItem?.mediaId
-                    ?: return completedResult(SessionResult.RESULT_ERROR_BAD_VALUE)
+                    ?: return completedResult(SessionError.ERROR_BAD_VALUE)
                 return ioFuture {
                     favourites.toggle(songId)
                     SessionResult(SessionResult.RESULT_SUCCESS)
@@ -407,7 +407,7 @@ class PlaybackService : MediaLibraryService() {
             if (customCommand.customAction != ACTION_CLEAR_QUEUE &&
                 customCommand.customAction != ACTION_SET_SLEEP_TIMER
             ) {
-                return completedResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED)
+                return completedResult(SessionError.ERROR_NOT_SUPPORTED)
             }
 
             /*
@@ -415,16 +415,16 @@ class PlaybackService : MediaLibraryService() {
              * commands advertised when the controller connected.
              */
             if (controller.uid != Process.myUid()) {
-                return completedResult(SessionResult.RESULT_ERROR_PERMISSION_DENIED)
+                return completedResult(SessionError.ERROR_PERMISSION_DENIED)
             }
 
             if (destroyed) {
-                return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                return completedResult(SessionError.ERROR_SESSION_DISCONNECTED)
             }
 
             if (customCommand.customAction == ACTION_SET_SLEEP_TIMER) {
                 val timer = sleepTimer
-                    ?: return completedResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                    ?: return completedResult(SessionError.ERROR_SESSION_DISCONNECTED)
                 timer.set(args.getInt(EXTRA_SLEEP_ARG, SleepTimerMath.ARG_OFF))
                 return completedResult(SessionResult.RESULT_SUCCESS)
             }
@@ -452,16 +452,16 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             val parent = BrowseTree.decode(parentId) as? BrowseId.Node
                 ?: return Futures.immediateFuture(
-                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                    LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
                 )
 
             return libraryFuture(
-                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+                onError = { LibraryResult.ofError(SessionError.ERROR_UNKNOWN) }
             ) {
                 val children = loadChildren(parent, page, pageSize)
 
                 if (children == null) {
-                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                    LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
                 } else {
                     LibraryResult.ofItemList(ImmutableList.copyOf(children), params)
                 }
@@ -475,16 +475,16 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val id = BrowseTree.decode(mediaId)
                 ?: return Futures.immediateFuture(
-                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                    LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
                 )
 
             return libraryFuture(
-                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+                onError = { LibraryResult.ofError(SessionError.ERROR_UNKNOWN) }
             ) {
                 val item = loadItem(id)
 
                 if (item == null) {
-                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                    LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
                 } else {
                     LibraryResult.ofItem(item, null)
                 }
@@ -607,7 +607,7 @@ class PlaybackService : MediaLibraryService() {
                     throw error
                 } catch (error: Exception) {
                     Log.e(TAG, "Search failed.", error)
-                    future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN))
+                    future.set(LibraryResult.ofError(SessionError.ERROR_UNKNOWN))
                 }
             }
 
@@ -627,7 +627,7 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             return libraryFuture(
-                onError = { LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN) }
+                onError = { LibraryResult.ofError(SessionError.ERROR_UNKNOWN) }
             ) {
                 val items = BrowseTree.page(searchItems(query), page, pageSize)
                 LibraryResult.ofItemList(ImmutableList.copyOf(items), params)
@@ -655,7 +655,7 @@ class PlaybackService : MediaLibraryService() {
                     // Make the next checkpoint a complete one.
                     mainScope.launch { lastEnqueuedSnapshot = null }
                     request.result?.set(
-                        SessionResult(SessionResult.RESULT_ERROR_IO)
+                        SessionResult(SessionError.ERROR_IO)
                     )
                 }
             }
@@ -1375,15 +1375,23 @@ class PlaybackService : MediaLibraryService() {
 
             if (sent.isFailure) {
                 result.set(
-                    SessionResult(SessionResult.RESULT_ERROR_SESSION_DISCONNECTED)
+                    SessionResult(SessionError.ERROR_SESSION_DISCONNECTED)
                 )
             }
         } catch (error: Exception) {
             Log.e(TAG, "Could not clear playback queue.", error)
-            result.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
+            result.set(SessionResult(SessionError.ERROR_UNKNOWN))
         }
 
         return result
+    }
+
+    /** Saved snapshots are clamped to 0..2; map them onto Player's typed constants. */
+    @Player.RepeatMode
+    private fun Int.toPlayerRepeatMode(): Int = when (this) {
+        PlaybackSnapshot.REPEAT_ONE -> Player.REPEAT_MODE_ONE
+        PlaybackSnapshot.REPEAT_ALL -> Player.REPEAT_MODE_ALL
+        else -> Player.REPEAT_MODE_OFF
     }
 
     private fun completedResult(code: Int): ListenableFuture<SessionResult> {
@@ -1425,7 +1433,7 @@ class PlaybackService : MediaLibraryService() {
                     preserveSavedSnapshot = saved.queueSongIds.isNotEmpty()
 
                     player.shuffleModeEnabled = saved.shuffleEnabled
-                    player.repeatMode = saved.repeatMode
+                    player.repeatMode = saved.repeatMode.toPlayerRepeatMode()
 
                     restorationInProgress = false
                     return@launch
@@ -1483,7 +1491,7 @@ class PlaybackService : MediaLibraryService() {
                 )
 
                 player.shuffleModeEnabled = saved.shuffleEnabled
-                player.repeatMode = saved.repeatMode
+                player.repeatMode = saved.repeatMode.toPlayerRepeatMode()
                 player.playWhenReady = false
                 player.prepare()
 

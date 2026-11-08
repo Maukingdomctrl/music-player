@@ -1,6 +1,7 @@
 package com.maukingdom.musicplayer
 
-import androidx.room.Room
+import androidx.room3.Room
+import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.content.Context
@@ -34,7 +35,9 @@ class LibraryDaoTest {
         database = Room.inMemoryDatabaseBuilder(
             context,
             MusicDatabase::class.java
-        ).build()
+        )
+            .setDriver(AndroidSQLiteDriver())
+            .build()
 
         repository = MusicRepository(database)
     }

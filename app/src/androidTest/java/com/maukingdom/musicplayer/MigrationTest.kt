@@ -1,11 +1,17 @@
 package com.maukingdom.musicplayer
 
 import android.content.Context
-import android.database.Cursor
 import android.database.sqlite.SQLiteConstraintException
-import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
-import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room3.testing.MigrationTestHelper
+import androidx.sqlite.SQLITE_DATA_FLOAT
+import androidx.sqlite.SQLITE_DATA_INTEGER
+import androidx.sqlite.SQLITE_DATA_NULL
+import androidx.sqlite.SQLITE_DATA_TEXT
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteException
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.driver.AndroidSQLiteDriver
+import androidx.sqlite.execSQL
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.maukingdom.musicplayer.data.MusicDatabase
@@ -13,10 +19,7 @@ import com.maukingdom.musicplayer.data.SongEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,20 +28,17 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
 
+    private val context: Context =
+        InstrumentationRegistry.getInstrumentation().targetContext
+    private val dbName = "migration-test-${UUID.randomUUID()}.db"
+
     @get:Rule
     val helper = MigrationTestHelper(
         InstrumentationRegistry.getInstrumentation(),
-        MusicDatabase::class.java
+        context.getDatabasePath(dbName),
+        AndroidSQLiteDriver(),
+        MusicDatabase::class
     )
-
-    private lateinit var context: Context
-    private lateinit var dbName: String
-
-    @Before
-    fun setUp() {
-        context = InstrumentationRegistry.getInstrumentation().targetContext
-        dbName = "migration-test-${UUID.randomUUID()}.db"
-    }
 
     @After
     fun tearDown() {
@@ -46,18 +46,13 @@ class MigrationTest {
     }
 
     @Test
-    fun migrate1To2_preservesExistingData() {
-        helper.createDatabase(dbName, 1).apply {
+    fun migrate1To2_preservesExistingData() = runBlocking {
+        helper.createDatabase(1).apply {
             insertV1Fixture(this)
             close()
         }
 
-        val db = helper.runMigrationsAndValidate(
-            dbName,
-            2,
-            true,
-            MusicDatabase.MIGRATION_1_2
-        )
+        val db = helper.runMigrationsAndValidate(2, listOf(MusicDatabase.MIGRATION_1_2))
 
         try {
             assertEquals(
@@ -104,22 +99,17 @@ class MigrationTest {
     }
 
     @Test
-    fun migratedDatabase_opensWithRoom() {
-        helper.createDatabase(dbName, 1).apply {
+    fun migratedDatabase_opensWithRoom() = runBlocking {
+        helper.createDatabase(1).apply {
             insertSong(this, EDITED_SONG_ROW)
             close()
         }
 
-        val database = Room.databaseBuilder(
-            context,
-            MusicDatabase::class.java,
-            dbName
-        )
-            .addMigrations(MusicDatabase.MIGRATION_1_2)
-            .build()
+        // The app's own configuration: Room 3, platform driver, MIGRATION_1_2.
+        val database = MusicDatabase.build(context, dbName)
 
         try {
-            val songs = runBlocking { database.libraryDao().getAllSongs() }
+            val songs = database.libraryDao().getAllSongs()
 
             assertEquals(
                 listOf(
@@ -146,38 +136,33 @@ class MigrationTest {
     }
 
     @Test
-    fun folderTables_foreignKeyBehaviour() {
-        helper.createDatabase(dbName, 1).apply {
+    fun folderTables_foreignKeyBehaviour() = runBlocking {
+        helper.createDatabase(1).apply {
             insertV1Fixture(this)
             close()
         }
 
-        val db = helper.runMigrationsAndValidate(
-            dbName,
-            2,
-            true,
-            MusicDatabase.MIGRATION_1_2
-        )
+        val db = helper.runMigrationsAndValidate(2, listOf(MusicDatabase.MIGRATION_1_2))
 
         try {
             db.execSQL("PRAGMA foreign_keys = ON")
             assertEquals(1L, count(db, "PRAGMA foreign_keys"))
 
-            db.execSQL(
+            db.exec(
                 """
                 INSERT INTO folder_playlists
                     (playlistId, treeUri, linkedAtMs, lastSyncedAtMs)
                 VALUES (?, ?, ?, ?)
                 """,
-                arrayOf<Any?>(PLAYLIST_ID, TREE_URI, 1_700_000_300_000L, null)
+                PLAYLIST_ID, TREE_URI, 1_700_000_300_000L, null
             )
             insertFolderDocument(db, "doc-edited", EDITED_SONG_ID)
             insertFolderDocument(db, "doc-plain", PLAIN_SONG_ID)
 
             // Removing a song from the playlist keeps the folder document.
-            db.execSQL(
+            db.exec(
                 "DELETE FROM playlist_songs WHERE playlistId = ? AND songId = ?",
-                arrayOf<Any?>(PLAYLIST_ID, EDITED_SONG_ID)
+                PLAYLIST_ID, EDITED_SONG_ID
             )
             assertEquals(
                 listOf<Any?>(EDITED_SONG_ID),
@@ -190,7 +175,7 @@ class MigrationTest {
 
             // Deleting a song nulls the folder document's songId and still
             // cascades its playlist_songs rows.
-            db.execSQL("DELETE FROM songs WHERE id = ?", arrayOf<Any?>(PLAIN_SONG_ID))
+            db.exec("DELETE FROM songs WHERE id = ?", PLAIN_SONG_ID)
             assertEquals(
                 listOf<Any?>(null),
                 readRow(
@@ -209,23 +194,27 @@ class MigrationTest {
             )
 
             // A tree URI can only be linked to one playlist.
-            db.execSQL(
+            db.exec(
                 "INSERT INTO playlists (id, name, createdAtMs) VALUES (?, ?, ?)",
-                arrayOf<Any?>(SECOND_PLAYLIST_ID, "Other", 1_700_000_400_000L)
+                SECOND_PLAYLIST_ID, "Other", 1_700_000_400_000L
             )
-            assertThrows(SQLiteConstraintException::class.java) {
-                db.execSQL(
+            val duplicateError = runCatching {
+                db.exec(
                     """
                     INSERT INTO folder_playlists
                         (playlistId, treeUri, linkedAtMs, lastSyncedAtMs)
                     VALUES (?, ?, ?, ?)
                     """,
-                    arrayOf<Any?>(SECOND_PLAYLIST_ID, TREE_URI, 1_700_000_500_000L, null)
+                    SECOND_PLAYLIST_ID, TREE_URI, 1_700_000_500_000L, null
                 )
-            }
+            }.exceptionOrNull()
+            assertTrue(
+                "Expected a UNIQUE constraint failure, got $duplicateError",
+                duplicateError != null && isConstraintFailure(duplicateError)
+            )
 
             // Deleting the playlist cascades to the folder link and documents.
-            db.execSQL("DELETE FROM playlists WHERE id = ?", arrayOf<Any?>(PLAYLIST_ID))
+            db.exec("DELETE FROM playlists WHERE id = ?", PLAYLIST_ID)
             assertEquals(
                 0L,
                 count(
@@ -256,69 +245,94 @@ class MigrationTest {
 
     // Fixture (raw SQL matching 1.json columns)
 
-    private fun insertV1Fixture(db: SupportSQLiteDatabase) {
+    private fun insertV1Fixture(db: SQLiteConnection) {
         insertSong(db, EDITED_SONG_ROW)
         insertSong(db, PLAIN_SONG_ROW)
 
-        db.execSQL(
+        db.exec(
             "INSERT INTO playlists (id, name, createdAtMs) VALUES (?, ?, ?)",
-            PLAYLIST_ROW.toTypedArray()
+            *PLAYLIST_ROW.toTypedArray()
         )
-        db.execSQL(
+        db.exec(
             "INSERT INTO playlist_songs (playlistId, songId, position) VALUES (?, ?, ?)",
-            arrayOf<Any?>(PLAYLIST_ID, EDITED_SONG_ID, 0L)
+            PLAYLIST_ID, EDITED_SONG_ID, 0L
         )
-        db.execSQL(
+        db.exec(
             "INSERT INTO playlist_songs (playlistId, songId, position) VALUES (?, ?, ?)",
-            arrayOf<Any?>(PLAYLIST_ID, PLAIN_SONG_ID, 1L)
+            PLAYLIST_ID, PLAIN_SONG_ID, 1L
         )
     }
 
-    private fun insertSong(db: SupportSQLiteDatabase, row: List<Any?>) {
-        db.execSQL(
+    private fun insertSong(db: SQLiteConnection, row: List<Any?>) {
+        db.exec(
             """
             INSERT INTO songs (
                 id, uri, title, artist, album, genre, year, durationMs,
                 artworkUri, mimeType, metadataEdited, dateAddedMs
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            row.toTypedArray()
+            *row.toTypedArray()
         )
     }
 
     private fun insertFolderDocument(
-        db: SupportSQLiteDatabase,
+        db: SQLiteConnection,
         documentId: String,
         songId: String
     ) {
-        db.execSQL(
+        db.exec(
             """
             INSERT INTO folder_documents
                 (playlistId, documentId, songId, discoveredAtMs)
             VALUES (?, ?, ?, ?)
             """,
-            arrayOf<Any?>(PLAYLIST_ID, documentId, songId, 1_700_000_350_000L)
+            PLAYLIST_ID, documentId, songId, 1_700_000_350_000L
         )
     }
 
-    // Query helpers
+    // SQL helpers (Room 3 / androidx.sqlite driver API)
+
+    /** Runs one statement with bound [args]. */
+    private fun SQLiteConnection.exec(sql: String, vararg args: Any?) {
+        prepare(sql.trimIndent()).use { statement ->
+            statement.bindAll(args)
+            statement.step()
+        }
+    }
+
+    private fun SQLiteStatement.bindAll(args: Array<out Any?>) {
+        args.forEachIndexed { i, value ->
+            val index = i + 1
+            when (value) {
+                null -> bindNull(index)
+                is Long -> bindLong(index, value)
+                is Int -> bindLong(index, value.toLong())
+                is Boolean -> bindLong(index, if (value) 1L else 0L)
+                is Double -> bindDouble(index, value)
+                is String -> bindText(index, value)
+                is ByteArray -> bindBlob(index, value)
+                else -> error("Unsupported bind type ${value::class}")
+            }
+        }
+    }
 
     private fun readRows(
-        db: SupportSQLiteDatabase,
+        db: SQLiteConnection,
         sql: String,
         vararg args: Any?
     ): List<List<Any?>> {
-        return db.query(sql.trimIndent(), args).use { cursor ->
+        return db.prepare(sql.trimIndent()).use { statement ->
+            statement.bindAll(args)
             buildList {
-                while (cursor.moveToNext()) {
-                    add((0 until cursor.columnCount).map { cursor.valueAt(it) })
+                while (statement.step()) {
+                    add((0 until statement.getColumnCount()).map { statement.valueAt(it) })
                 }
             }
         }
     }
 
     private fun readRow(
-        db: SupportSQLiteDatabase,
+        db: SQLiteConnection,
         sql: String,
         vararg args: Any?
     ): List<Any?> {
@@ -327,11 +341,11 @@ class MigrationTest {
         return rows.single()
     }
 
-    private fun count(db: SupportSQLiteDatabase, sql: String, vararg args: Any?): Long {
+    private fun count(db: SQLiteConnection, sql: String, vararg args: Any?): Long {
         return readRow(db, sql, *args).single() as Long
     }
 
-    private fun tableExists(db: SupportSQLiteDatabase, table: String): Long {
+    private fun tableExists(db: SQLiteConnection, table: String): Long {
         return count(
             db,
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -340,12 +354,21 @@ class MigrationTest {
     }
 
     /** Returns the stored value with its SQLite storage type preserved. */
-    private fun Cursor.valueAt(index: Int): Any? = when (getType(index)) {
-        Cursor.FIELD_TYPE_NULL -> null
-        Cursor.FIELD_TYPE_INTEGER -> getLong(index)
-        Cursor.FIELD_TYPE_FLOAT -> getDouble(index)
-        Cursor.FIELD_TYPE_STRING -> getString(index)
+    private fun SQLiteStatement.valueAt(index: Int): Any? = when (getColumnType(index)) {
+        SQLITE_DATA_NULL -> null
+        SQLITE_DATA_INTEGER -> getLong(index)
+        SQLITE_DATA_FLOAT -> getDouble(index)
+        SQLITE_DATA_TEXT -> getText(index)
         else -> getBlob(index)
+    }
+
+    /** The platform driver may surface the failure as either exception type. */
+    private fun isConstraintFailure(error: Throwable): Boolean {
+        if (error is SQLiteConstraintException) return true
+        if (error is SQLiteException &&
+            error.message.orEmpty().contains("constraint", ignoreCase = true)
+        ) return true
+        return error.cause?.let(::isConstraintFailure) ?: false
     }
 
     private companion object {

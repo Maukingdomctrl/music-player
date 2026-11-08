@@ -2,7 +2,11 @@ package com.maukingdom.musicplayer
 
 import android.content.Context
 import android.database.sqlite.SQLiteConstraintException
-import androidx.room.Room
+import androidx.room3.Room
+import androidx.room3.executeSQL
+import androidx.room3.useReaderConnection
+import androidx.room3.useWriterConnection
+import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.maukingdom.musicplayer.data.FolderDocumentEntity
@@ -14,6 +18,7 @@ import com.maukingdom.musicplayer.data.MusicRepository
 import com.maukingdom.musicplayer.data.PlaylistSongEntity
 import com.maukingdom.musicplayer.data.ScannedFolderDocument
 import com.maukingdom.musicplayer.data.SongEntity
+import androidx.sqlite.SQLiteException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -39,7 +44,9 @@ class FolderSyncRepositoryTest {
         database = Room.inMemoryDatabaseBuilder(
             context,
             MusicDatabase::class.java
-        ).build()
+        )
+            .setDriver(AndroidSQLiteDriver())
+            .build()
 
         dao = database.libraryDao()
         repository = MusicRepository(database)
@@ -383,13 +390,17 @@ class FolderSyncRepositoryTest {
             listOf(doc("doc-base", "song-base"))
         ).playlistId
 
-        database.openHelper.writableDatabase.execSQL(
-            """
-            CREATE TEMP TRIGGER fail_doc BEFORE INSERT ON folder_documents
-            WHEN NEW.documentId = 'doc-poison'
-            BEGIN SELECT RAISE(ABORT, 'forced'); END;
-            """.trimIndent()
-        )
+        // In-memory Room 3 databases use a single connection, so the TEMP
+        // trigger is visible to the repository's transactions.
+        database.useWriterConnection { connection ->
+            connection.executeSQL(
+                """
+                CREATE TEMP TRIGGER fail_doc BEFORE INSERT ON folder_documents
+                WHEN NEW.documentId = 'doc-poison'
+                BEGIN SELECT RAISE(ABORT, 'forced'); END;
+                """.trimIndent()
+            )
+        }
 
         val syncError = runCatching {
             repository.applyFolderSync(
@@ -400,8 +411,8 @@ class FolderSyncRepositoryTest {
         }.exceptionOrNull()
 
         assertTrue(
-            "Expected SQLiteConstraintException, got $syncError",
-            syncError is SQLiteConstraintException
+            "Expected a constraint failure, got $syncError",
+            syncError != null && isConstraintFailure(syncError)
         )
         assertTrue(syncError?.message.orEmpty().contains("forced"))
         assertNull(dao.getSong("song-ok"))
@@ -427,8 +438,8 @@ class FolderSyncRepositoryTest {
         }.exceptionOrNull()
 
         assertTrue(
-            "Expected SQLiteConstraintException, got $createError",
-            createError is SQLiteConstraintException
+            "Expected a constraint failure, got $createError",
+            createError != null && isConstraintFailure(createError)
         )
         assertNull(dao.getFolderLinkByTreeUri(OTHER_TREE_URI))
         assertEquals(1L, count("SELECT COUNT(*) FROM playlists"))
@@ -537,36 +548,49 @@ class FolderSyncRepositoryTest {
         return dao.getPlaylistEntries(playlistId)
     }
 
-    private fun ledger(playlistId: Long): List<FolderDocumentEntity> {
-        return database.openHelper.readableDatabase.query(
-            """
-            SELECT playlistId, documentId, songId, discoveredAtMs
-            FROM folder_documents
-            WHERE playlistId = ?
-            ORDER BY documentId ASC
-            """.trimIndent(),
-            arrayOf<Any?>(playlistId)
-        ).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) {
-                    add(
-                        FolderDocumentEntity(
-                            playlistId = cursor.getLong(0),
-                            documentId = cursor.getString(1),
-                            songId = if (cursor.isNull(2)) null else cursor.getString(2),
-                            discoveredAtMs = cursor.getLong(3)
+    private suspend fun ledger(playlistId: Long): List<FolderDocumentEntity> {
+        return database.useReaderConnection { connection ->
+            connection.usePrepared(
+                """
+                SELECT playlistId, documentId, songId, discoveredAtMs
+                FROM folder_documents
+                WHERE playlistId = ?
+                ORDER BY documentId ASC
+                """.trimIndent()
+            ) { statement ->
+                statement.bindLong(1, playlistId)
+                buildList {
+                    while (statement.step()) {
+                        add(
+                            FolderDocumentEntity(
+                                playlistId = statement.getLong(0),
+                                documentId = statement.getText(1),
+                                songId = if (statement.isNull(2)) null else statement.getText(2),
+                                discoveredAtMs = statement.getLong(3)
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
     }
 
-    private fun count(sql: String): Long {
-        return database.openHelper.readableDatabase.query(sql).use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            cursor.getLong(0)
+    private suspend fun count(sql: String): Long {
+        return database.useReaderConnection { connection ->
+            connection.usePrepared(sql) { statement ->
+                assertTrue(statement.step())
+                statement.getLong(0)
+            }
         }
+    }
+
+    /** The platform driver may surface the failure as either exception type. */
+    private fun isConstraintFailure(error: Throwable): Boolean {
+        if (error is SQLiteConstraintException) return true
+        if (error is SQLiteException &&
+            error.message.orEmpty().contains("constraint", ignoreCase = true)
+        ) return true
+        return error.cause?.let(::isConstraintFailure) ?: false
     }
 
     private fun syncResult(

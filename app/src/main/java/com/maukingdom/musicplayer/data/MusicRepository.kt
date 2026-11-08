@@ -1,6 +1,6 @@
 package com.maukingdom.musicplayer.data
 
-import androidx.room.withTransaction
+import androidx.room3.withWriteTransaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -143,7 +143,7 @@ class MusicRepository(
      * entries. User-corrected descriptive metadata is preserved on re-import.
      */
     suspend fun saveImportedSongs(importedSongs: List<SongEntity>) {
-        database.withTransaction {
+        database.withWriteTransaction {
             for (imported in importedSongs.distinctBy { it.id }) {
                 val existing = dao.getSong(imported.id)
 
@@ -172,8 +172,8 @@ class MusicRepository(
             "Year must be between 1 and 9999."
         }
 
-        return database.withTransaction {
-            val existing = dao.getSong(songId) ?: return@withTransaction false
+        return database.withWriteTransaction {
+            val existing = dao.getSong(songId) ?: return@withWriteTransaction false
 
             dao.updateSong(
                 existing.copy(
@@ -229,11 +229,11 @@ class MusicRepository(
         playlistId: Long,
         songId: String
     ): Boolean {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             if (dao.getPlaylist(playlistId) == null ||
                 dao.getSong(songId) == null
             ) {
-                return@withTransaction false
+                return@withWriteTransaction false
             }
 
             val position = dao.getLastPlaylistPosition(playlistId) + 1
@@ -268,7 +268,7 @@ class MusicRepository(
      * folder syncs only add new folder files.
      */
     suspend fun addSongsToPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             checkNotNull(dao.getPlaylist(playlistId)) { "Playlist no longer exists." }
             appendInTransaction(playlistId, songIds)
         }
@@ -282,7 +282,7 @@ class MusicRepository(
         val cleanedName = name.trim()
         require(cleanedName.isNotEmpty()) { "A playlist name is required." }
 
-        return database.withTransaction {
+        return database.withWriteTransaction {
             val playlistId = dao.insertPlaylist(PlaylistEntity(name = cleanedName))
             appendInTransaction(playlistId, songIds).copy(createdPlaylistId = playlistId)
         }
@@ -302,7 +302,7 @@ class MusicRepository(
     ): PlaylistEdit {
         require(fromPlaylistId != toPlaylistId) { "Choose a different playlist." }
 
-        return database.withTransaction {
+        return database.withWriteTransaction {
             checkNotNull(dao.getPlaylist(toPlaylistId)) { "Playlist no longer exists." }
 
             val sourceOrder = dao.getPlaylistEntries(fromPlaylistId).map { it.songId }
@@ -330,7 +330,7 @@ class MusicRepository(
         val cleanedName = name.trim()
         require(cleanedName.isNotEmpty()) { "A playlist name is required." }
 
-        return database.withTransaction {
+        return database.withWriteTransaction {
             val playlistId = dao.insertPlaylist(PlaylistEntity(name = cleanedName))
             moveSongs(fromPlaylistId, playlistId, songIds).copy(createdPlaylistId = playlistId)
         }
@@ -338,7 +338,7 @@ class MusicRepository(
 
     /** Removes [songIds] from [playlistId] in one transaction, keeping their indices for undo. */
     suspend fun removeSongsFromPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             val order = dao.getPlaylistEntries(playlistId).map { it.songId }
             val removed = planRemoval(order, songIds)
 
@@ -356,7 +356,7 @@ class MusicRepository(
      * it created. Songs or playlists deleted since are skipped.
      */
     suspend fun undoPlaylistEdit(edit: PlaylistEdit) {
-        database.withTransaction {
+        database.withWriteTransaction {
             val createdId = edit.createdPlaylistId
             if (createdId != null) {
                 dao.deletePlaylist(createdId)
@@ -391,7 +391,7 @@ class MusicRepository(
      * first), skipping songs already there. For Favourites.
      */
     suspend fun prependSongsToPlaylist(playlistId: Long, songIds: List<String>): PlaylistEdit {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             checkNotNull(dao.getPlaylist(playlistId)) { "Playlist no longer exists." }
 
             val plan = planPrepend(
@@ -430,7 +430,7 @@ class MusicRepository(
         playlistId: Long,
         orderedSongIds: List<String>
     ): Boolean {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             val entries = dao.getPlaylistEntries(playlistId)
             val existingIds = entries.map { it.songId }
 
@@ -439,7 +439,7 @@ class MusicRepository(
                 orderedSongIds.toSet().size != orderedSongIds.size ||
                 orderedSongIds.toSet() != existingIds.toSet()
             ) {
-                return@withTransaction false
+                return@withWriteTransaction false
             }
 
             val entriesById = entries.associateBy { it.songId }
@@ -470,7 +470,7 @@ class MusicRepository(
         val cleanedName = name.trim()
         require(cleanedName.isNotEmpty()) { "A playlist name is required." }
 
-        return database.withTransaction {
+        return database.withWriteTransaction {
             val existingLink = dao.getFolderLinkByTreeUri(treeUri)
 
             val playlistId = if (existingLink != null) {
@@ -514,7 +514,7 @@ class MusicRepository(
         documents: List<ScannedFolderDocument>,
         syncedAtMs: Long
     ): FolderSyncResult {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             checkNotNull(dao.getFolderLink(playlistId)) {
                 "Playlist is not linked to a folder."
             }
@@ -545,7 +545,7 @@ class MusicRepository(
         documents: List<ScannedFolderDocument>,
         syncedAtMs: Long
     ): FolderSyncResult {
-        return database.withTransaction {
+        return database.withWriteTransaction {
             checkNotNull(dao.getFolderLink(playlistId)) {
                 "Playlist is not linked to a folder."
             }
