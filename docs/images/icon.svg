@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- App icon "Note in a Wheel", converted 1:1 from
+     app/src/main/res/drawable/ic_launcher_{background,foreground}.xml
+     and shown with the launcher's circular mask (the 72 dp visible area). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="18 18 72 72">
+  <defs>
+    <clipPath id="mask"><circle cx="54" cy="54" r="36"/></clipPath>
+    <linearGradient id="metal" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="37.8" y2="108">
+      <stop offset="0" stop-color="#FBFBFC"/><stop offset="0.5" stop-color="#D3D6DB"/><stop offset="1" stop-color="#EEF0F2"/>
+    </linearGradient>
+    <radialGradient id="shine" gradientUnits="userSpaceOnUse" cx="30.2" cy="16.2" r="81">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.85"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="54" y1="28" x2="54" y2="80">
+      <stop offset="0" stop-color="#5A5D64"/><stop offset="0.28" stop-color="#16171A"/><stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="head" gradientUnits="userSpaceOnUse" x1="45" y1="63.1" x2="45" y2="78.9">
+      <stop offset="0" stop-color="#5A5D64"/><stop offset="0.28" stop-color="#16171A"/><stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="stem" gradientUnits="userSpaceOnUse" x1="53.75" y1="30" x2="53.75" y2="71">
+      <stop offset="0" stop-color="#5A5D64"/><stop offset="0.28" stop-color="#16171A"/><stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="flag" gradientUnits="userSpaceOnUse" x1="60.9" y1="30" x2="60.9" y2="56">
+      <stop offset="0" stop-color="#5A5D64"/><stop offset="0.28" stop-color="#16171A"/><stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#mask)">
+    <rect width="108" height="108" fill="url(#metal)"/>
+    <rect width="108" height="108" fill="url(#shine)"/>
+    <!-- Shadow -->
+    <path transform="translate(0 1.6)" d="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z" fill="none" stroke="#000" stroke-opacity="0.25" stroke-width="5"/>
+    <g transform="translate(54 56.6) scale(0.62) translate(-54 -51)" fill="#000" fill-opacity="0.25">
+      <path d="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z"/>
+      <path d="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z"/>
+      <path d="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z"/>
+    </g>
+    <!-- Ring -->
+    <path d="M54,28A26,26 0,1 1,54,80A26,26 0,1 1,54,28Z" fill="none" stroke="url(#ring)" stroke-width="5"/>
+    <!-- Note -->
+    <g transform="translate(54 55) scale(0.62) translate(-54 -51)">
+      <path d="M54.2718,67.2539A10,7.5 -22,1 1,35.7282,74.7461A10,7.5 -22,1 1,54.2718,67.2539Z" fill="url(#head)"/>
+      <path d="M53.7,30L53.8,30A2.2,2.2 0,0 1,56,32.2L56,68.8A2.2,2.2 0,0 1,53.8,71L53.7,71A2.2,2.2 0,0 1,51.5,68.8L51.5,32.2A2.2,2.2 0,0 1,53.7,30Z" fill="url(#stem)"/>
+      <path d="M53.8,30C54,38 70,40 68,56C67,50 62,46 53.8,45Z" fill="url(#flag)"/>
+    </g>
+  </g>
+</svg>

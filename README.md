@@ -1,162 +1,96 @@
-# Music Player
+<p align="center">
+  <img src="docs/images/icon.svg" width="112" alt="MyCar Music app icon">
+</p>
 
-A native, offline Android music player using Kotlin, Jetpack Compose,
-Media3, Room, DataStore, MediaStore and the Storage Access Framework.
+<h1 align="center">MyCar Music</h1>
 
-Package: `com.maukingdom.musicplayer`
+<p align="center">
+  <b>A beautiful offline music player for the songs you already own — at home and in the car.</b>
+</p>
 
-## Current integration status
+<p align="center">
+  <a href="https://github.com/Maukingdomctrl/music-player/releases/latest"><b>Download the APK</b></a>
+  &nbsp;·&nbsp; Android 8.0+ &nbsp;·&nbsp; No account &nbsp;·&nbsp; No ads &nbsp;·&nbsp; Works offline
+</p>
 
-The source files were generated in batches. Before treating the project as
-build-ready, apply the separately supplied integration corrections to the
-earlier files.
+<p align="center">
+  <img src="docs/screenshots/home.png" width="220" alt="Home screen with Continue listening">
+  <img src="docs/screenshots/player.png" width="220" alt="Studio player with beat visualiser">
+  <img src="docs/screenshots/playlist.png" width="220" alt="A playlist">
+  <img src="docs/screenshots/widget.png" width="220" alt="Home-screen widget">
+</p>
 
-The project has not been compiled or physically tested merely because its
-files have been generated. Build and test it in Android Studio.
+## Features
+
+- **Offline playback** — plays MP3, M4A, FLAC and other audio files stored on your phone or SD card. No internet, no streaming.
+- **Playlists** — create, rename and reorder playlists, or turn a whole SD-card folder into a playlist that stays in sync.
+- **Favourites** — tap the heart on any song to keep it one tap away.
+- **Up Next queue** — see what's coming, drag to reorder, play next or add to the queue.
+- **Continue listening** — pick up exactly where you left off, right from the Home screen.
+- **Sleep timer** — 15, 30, 45 or 60 minutes, or the end of the current song, with a gentle fade-out.
+- **EQ presets** — Flat, Car, Vocal, Bass boost and Earphones, plus bass and treble controls.
+- **Home-screen widget** — cover, title and play/pause/skip without opening the app.
+- **Android Auto** — browse your playlists and Favourites from the car screen.
+- **Living covers** — the player and playlists take on the colours of the album art.
+- **Beat visualiser** — bars that move with the music in the Studio player.
+- **Metadata editor** — fix titles, artists and albums inside the app; your files are never touched.
+- **Voice search** — "Hey Google, play *song name* on Music Player".
+- **Car mode** — big, simple buttons for the dashboard, plus a classic retro layout if you prefer it.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/library.png" width="250" alt="Your Library"><br><sub>Your Library</sub></td>
+    <td align="center"><img src="docs/screenshots/search.png" width="250" alt="Search"><br><sub>Search</sub></td>
+    <td align="center"><img src="docs/screenshots/up-next.png" width="250" alt="Up Next queue"><br><sub>Up Next queue</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/sleep-timer.png" width="250" alt="Sleep timer"><br><sub>Sleep timer</sub></td>
+    <td align="center"><img src="docs/screenshots/equaliser.png" width="250" alt="Equaliser presets"><br><sub>Equaliser presets</sub></td>
+    <td align="center"><img src="docs/screenshots/car-mode.png" width="250" alt="Car mode"><br><sub>Car mode</sub></td>
+  </tr>
+</table>
+
+## Privacy
+
+- **No accounts.** There is nothing to sign up for.
+- **No ads and no analytics.** The app does not track you.
+- **No internet needed.** Everything stays on your phone.
+- **Your music files are never modified.** Edits to song details are stored in the app only.
+
+## Download
+
+1. Open the [**Releases page**](https://github.com/Maukingdomctrl/music-player/releases/latest) on your phone.
+2. Download the `.apk` file from the latest release.
+3. Open it and allow your browser or file manager to **install unknown apps** when Android asks.
+4. Open **Music Player**, tap the menu and choose **Scan this phone**, **Select files** or **Import SD-card folder**.
 
 ## Requirements
 
-- Windows 10 or 11.
-- Android Studio with Android SDK 35 installed.
-- JDK 17 configured as the Gradle JDK.
-- Gradle 8.9, or a locally generated Gradle wrapper for Gradle 8.9.
-- An Android emulator or device running Android 8.0 / API 26 or later.
+- Android 8.0 (Oreo) or later.
+- Music files stored on the phone or an SD card.
 
-The project targets API 35. Initial dependency downloads require an internet
-connection; normal music playback is designed to work offline.
+## Harman simulator disclaimer
 
-## Windows Android Studio setup
+The app includes a Tata Punch EV Harman diagnostic screen. It is a
+**simulator only**: its connection state, metadata and events are simulated.
+It does not connect to or diagnose a vehicle and does not establish
+compatibility with any vehicle or infotainment system. Real behaviour must be
+checked on the actual hardware. Set up your music before driving and never
+operate the phone while driving.
 
-1. Install Android Studio from the official Android developer website.
-2. Open Android Studio and complete its setup wizard.
-3. Open **Tools > SDK Manager**:
-   - Install Android SDK Platform 35.
-   - Install the Android SDK Platform Tools.
-   - Install an appropriate Android Emulator and system image.
-4. Install a JDK 17 distribution if one is not already available.
-5. In Android Studio, open **Settings > Build, Execution, Deployment >
-   Build Tools > Gradle** and select a JDK 17 installation for **Gradle JDK**.
-6. Assemble the project files under a directory named `music-player`, using
-   the exact paths provided with the source files.
-7. Apply the integration corrections mentioned above before building.
+## For developers
 
-## Gradle setup
+Build, test and toolchain instructions are in [docs/BUILDING.md](docs/BUILDING.md).
 
-This manually assembled project does not include a Gradle wrapper JAR or
-wrapper scripts.
+## Credits
 
-One option is to install Gradle 8.9 locally and configure Android Studio to
-use it. Another is to use that local installation to generate a wrapper:
+The music shown in the screenshots is by [Blue Dot Sessions](https://freemusicarchive.org/music/Blue_Dot_Sessions/)
+(albums *Marfa*, *Oslo*, *Ocean Blooms*, *Jupiter on Ice* and *Sourdough*), from the
+[Free Music Archive](https://freemusicarchive.org/), licensed under
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). The music is not included in this repository.
 
-```powershell
-cd C:\path\to\music-player
-gradle wrapper --gradle-version 8.9
-```
+## License
 
-The wrapper task generates:
-
-- `gradlew`
-- `gradlew.bat`
-- `gradle/wrapper/gradle-wrapper.properties`
-- `gradle/wrapper/gradle-wrapper.jar`
-
-Only use a trusted Gradle installation and distribution.
-
-## Open and build
-
-1. In Android Studio, choose **Open** and select the `music-player` folder.
-2. Allow Gradle sync to finish and install any requested SDK components.
-3. Confirm that the Gradle JDK is JDK 17.
-4. Choose **Build > Make Project**.
-5. Select the `app` run configuration and run it on an emulator or device.
-
-From PowerShell, after generating the wrapper:
-
-```powershell
-.\gradlew.bat assembleDebug
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat connectedDebugAndroidTest
-```
-
-The connected test command requires a running emulator or connected device.
-
-## Emulator setup and local music
-
-1. In Android Studio, open **Tools > Device Manager**.
-2. Create a phone emulator with an API 35 system image.
-3. Start the emulator.
-4. Drag actual MP3, M4A, or FLAC files from Windows into the emulator, or use
-   Android Studio's Device Explorer to place files in shared storage.
-5. Install and open the app.
-6. Use **SELECT FILES** to choose audio through the system document picker.
-7. Alternatively, use **SCAN DEVICE** and grant audio-library permission.
-
-The emulator's media index may take time to notice newly copied files.
-If scanning does not show them, try the document picker or restart the
-emulator and scan again. File-format support depends on the device and
-decoder implementation.
-
-## Local playback checklist
-
-- [ ] Import a real MP3 file.
-- [ ] Import an M4A file supported by the device.
-- [ ] Import a FLAC file supported by the device.
-- [ ] Confirm title, singer, album/movie and duration where available.
-- [ ] Check available embedded or provider artwork.
-- [ ] Play, pause, seek, skip forward and skip backward.
-- [ ] Test shuffle and all repeat modes.
-- [ ] Edit metadata and confirm the library shows the correction.
-- [ ] Verify the original audio file was not modified.
-- [ ] Create, rename, reorder and delete playlists.
-- [ ] Remove a song from the app library and confirm its file remains.
-- [ ] Test selected-file access again after restarting the app.
-- [ ] Test what happens when a file is moved, deleted or access is revoked.
-- [ ] Check whether importing the same physical file through MediaStore and
-      SAF creates duplicate entries.
-
-## Recovery checklist
-
-- [ ] Play a queue and seek to a recognizable position.
-- [ ] Set shuffle and repeat.
-- [ ] Pause and close the app, then reopen it.
-- [ ] Confirm the queue, track, position, shuffle and repeat are restored.
-- [ ] Confirm restoration does not start audible playback automatically.
-- [ ] Repeat with one saved file unavailable and check the recovery notice.
-- [ ] Test service/process restart separately from normal activity recreation.
-
-Checkpointing is periodic. An abrupt process kill can lose changes made
-since the last completed checkpoint.
-
-## Background playback and Bluetooth checklist
-
-- [ ] Start a real local track, then return to the launcher.
-- [ ] Lock the screen and confirm playback continues.
-- [ ] Test play/pause and skip from Android media controls.
-- [ ] Verify notification and lock-screen metadata.
-- [ ] Connect Bluetooth headphones or a speaker and check metadata and
-      hardware media buttons.
-- [ ] Disconnect the headphones or speaker and confirm playback does not
-      unexpectedly continue through the phone speaker.
-- [ ] Test interruptions from another audio app and a phone call.
-- [ ] Test on both an emulator and a physical device where possible.
-
-The app restores playback when the app or service starts. The current
-generated service does not implement Media3's separate system playback-
-resumption callback for restarting a stopped service from an old system
-notification.
-
-## Harman simulator and vehicle testing
-
-The Tata Punch EV Harman diagnostic screen is a **simulator only**.
-Its connection state, metadata and events are simulated. It does not
-connect to or diagnose a vehicle and does not establish compatibility.
-
-Actual vehicle and infotainment behavior must be tested on the physical
-hardware. Configure music before driving and do not operate the phone
-while driving.
-
-## Privacy and offline behavior
-
-The project does not include accounts, cloud storage, online streaming,
-advertisements, subscriptions or analytics. It plays locally accessible
-audio files.
+[MIT](LICENSE) © 2026 Maukingdomctrl
